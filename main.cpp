@@ -18,12 +18,11 @@
  *                                                                          *
  ****************************************************************************
  *                                                                          *
- *       The application shows initialization of Vulkan, creation of        *
- *     vertex buffers, shaders and uniform buffers in order to display      *
- *        a simple example of 3D graphics - rotating colored cube.          *
+ *       The application shows a simple example of the ray tracing          *
+ *                    pipeline drawing a solid cube.                        *
  *                                                                          *
  *    The example is designed to demonstrate pure sequence of actions       *
- *    required to create a Vulkan 3D application, so all code is done       *
+ *    required to create a ray tracing  application, so all code is done    *
  *      as a large main() function and some duplication is present.         *
  *                                                                          *
  *   You may thing about how to split this into modules in order to make    *
@@ -45,21 +44,17 @@
 // GLM has been initially designed for OpenGL, so we have to apply a patch
 // to make it work with Vulkan.
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
-#include <glm/vec4.hpp>
-#include <glm/mat4x4.hpp>
+#include <glm/glm.hpp>
 #include <glm/gtx/transform.hpp>
 
 #include <set>
 #include <array>
-#include <chrono>
 #include <string>
 #include <vector>
-#include <cstdint>
 #include <cstring>
 #include <fstream>
 #include <iostream>
 #include <optional>
-#include <algorithm>
 
 /**
  * Switch on validation levels.
@@ -81,34 +76,11 @@ constexpr int WINDOW_HEIGHT = 800;
 /**
  * Application name.
  */
-constexpr const char* APPLICATION_NAME = "VKExample";
+constexpr const char* APPLICATION_NAME = "VKExampleRTX";
 /**
  * Maximal amount of frames processed at the same time.
  */
 constexpr int MAX_FRAMES_IN_FLIGHT = 5;
-
-
-
-
-
-
-#include <functional>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 /**
  * Callback function that will be called each time a validation level produces a message.
@@ -131,7 +103,7 @@ VKAPI_ATTR VkBool32 VKAPI_CALL messageCallback
     (void) messageType;
     (void) pUserData;
     // Print the message.
-    std::cerr << "[MSG]:" << pCallbackData->pMessage << std::endl;
+    std::cerr << "[MSG]: " << pCallbackData->pMessage << std::endl;
     // Do only logging, do not abort the call.
     return VK_FALSE;
 }
@@ -1340,6 +1312,10 @@ int main()
     vkFreeCommandBuffers(vkDevice, vkBuildASCommandPool, 1, &vkBuildASCmdBuffer);
     vkDestroyCommandPool(vkDevice, vkBuildASCommandPool, nullptr);
 
+    // Destroy the scratch buffer and free the memory.
+    vkFreeMemory(vkDevice, vkScratchBufferMemory, nullptr);
+    vkDestroyBuffer(vkDevice, vkScratchBufferHandle, nullptr);
+
     // ==========================================================================
     //                    STEP 19: Create a storage image
     // ==========================================================================
@@ -1732,8 +1708,8 @@ int main()
     descriptorSetLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
     descriptorSetLayoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
     descriptorSetLayoutInfo.pBindings = bindings.data();
-    VkDescriptorSetLayout descriptorSetLayout;
-    if (vkCreateDescriptorSetLayout(vkDevice, &descriptorSetLayoutInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS) {
+    VkDescriptorSetLayout vkDescriptorSetLayout;
+    if (vkCreateDescriptorSetLayout(vkDevice, &descriptorSetLayoutInfo, nullptr, &vkDescriptorSetLayout) != VK_SUCCESS) {
         std::cerr << "Failed to create a descriptor set layout!" << std::endl;
         abort();
     }
@@ -1742,7 +1718,7 @@ int main()
     VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo{};
     pipelineLayoutCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     pipelineLayoutCreateInfo.setLayoutCount = 1;
-    pipelineLayoutCreateInfo.pSetLayouts = &descriptorSetLayout;
+    pipelineLayoutCreateInfo.pSetLayouts = &vkDescriptorSetLayout;
     VkPipelineLayout vkPipelineLayout;
     if (vkCreatePipelineLayout(vkDevice, &pipelineLayoutCreateInfo, nullptr, &vkPipelineLayout) != VK_SUCCESS) {
         std::cerr << "Failed to create a pipeline layout!" << std::endl;
@@ -1894,14 +1870,14 @@ int main()
     vkUniformBufferAllocInfo.memoryTypeIndex = uniformBufferMemTypeIndex;
 
     // Allocate memory for the vertex buffer.
-    VkDeviceMemory vkUniformBuffersMemory;
-    if (vkAllocateMemory(vkDevice, &vkUniformBufferAllocInfo, nullptr, &vkUniformBuffersMemory) != VK_SUCCESS) {
+    VkDeviceMemory vkUniformBufferMemory;
+    if (vkAllocateMemory(vkDevice, &vkUniformBufferAllocInfo, nullptr, &vkUniformBufferMemory) != VK_SUCCESS) {
         std::cerr << "Failed to allocate buffer memory!" << std::endl;
         abort();
     }
 
     // Bind the buffer to the allocated memory.
-    vkBindBufferMemory(vkDevice, vkUniformBuffer, vkUniformBuffersMemory, 0);
+    vkBindBufferMemory(vkDevice, vkUniformBuffer, vkUniformBufferMemory, 0);
 
     // Fill in the uniform buffer object.
     UniformBufferObject ubo{};
@@ -1911,9 +1887,9 @@ int main()
 
     // Write the uniform buffer object data.
     void* data;
-    vkMapMemory(vkDevice, vkUniformBuffersMemory, 0, sizeof(ubo), 0, &data);
+    vkMapMemory(vkDevice, vkUniformBufferMemory, 0, sizeof(ubo), 0, &data);
     memcpy(data, &ubo, sizeof(ubo));
-    vkUnmapMemory(vkDevice, vkUniformBuffersMemory);
+    vkUnmapMemory(vkDevice, vkUniformBufferMemory);
 
     // ==========================================================================
     //                      STEP 26: Write descriptor sets
@@ -1933,8 +1909,8 @@ int main()
     descriptorPoolCreateInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
     descriptorPoolCreateInfo.pPoolSizes = poolSizes.data();
     descriptorPoolCreateInfo.maxSets = 1;
-    VkDescriptorPool descriptorPool;
-    if (vkCreateDescriptorPool(vkDevice, &descriptorPoolCreateInfo, nullptr, &descriptorPool) != VK_SUCCESS) {
+    VkDescriptorPool vkDescriptorPool;
+    if (vkCreateDescriptorPool(vkDevice, &descriptorPoolCreateInfo, nullptr, &vkDescriptorPool) != VK_SUCCESS) {
         std::cerr << "Failed to create a descriptor pool!" << std::endl;
         abort();
     }
@@ -1942,11 +1918,11 @@ int main()
     // Allocate descriptior set that corresponds to the defined layout.
     VkDescriptorSetAllocateInfo descriptorSetAllocateInfo {};
     descriptorSetAllocateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    descriptorSetAllocateInfo.descriptorPool = descriptorPool;
-    descriptorSetAllocateInfo.pSetLayouts = &descriptorSetLayout;
+    descriptorSetAllocateInfo.descriptorPool = vkDescriptorPool;
+    descriptorSetAllocateInfo.pSetLayouts = &vkDescriptorSetLayout;
     descriptorSetAllocateInfo.descriptorSetCount = 1;
-    VkDescriptorSet descriptorSet;
-    if (vkAllocateDescriptorSets(vkDevice, &descriptorSetAllocateInfo, &descriptorSet) != VK_SUCCESS) {
+    VkDescriptorSet vkDescriptorSet;
+    if (vkAllocateDescriptorSets(vkDevice, &descriptorSetAllocateInfo, &vkDescriptorSet) != VK_SUCCESS) {
         std::cerr << "Failed to allocate descriptor sets!" << std::endl;
         abort();
     }
@@ -1959,7 +1935,7 @@ int main()
     VkWriteDescriptorSet accelerationStructureWrite{};
     accelerationStructureWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     accelerationStructureWrite.pNext = &descriptorAccelerationStructureInfo;
-    accelerationStructureWrite.dstSet = descriptorSet;
+    accelerationStructureWrite.dstSet = vkDescriptorSet;
     accelerationStructureWrite.dstBinding = 0;
     accelerationStructureWrite.descriptorCount = 1;
     accelerationStructureWrite.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_NV;
@@ -1970,7 +1946,7 @@ int main()
     storageImageDescriptor.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
     VkWriteDescriptorSet storageImageWrite {};
     storageImageWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    storageImageWrite.dstSet = descriptorSet;
+    storageImageWrite.dstSet = vkDescriptorSet;
     storageImageWrite.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     storageImageWrite.dstBinding = 1;
     storageImageWrite.pImageInfo = &storageImageDescriptor;
@@ -1983,7 +1959,7 @@ int main()
     uniformBufferInfo.range = vkUniformBufferSize;
     VkWriteDescriptorSet uniformBufferWrite {};
     uniformBufferWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    uniformBufferWrite.dstSet = descriptorSet;
+    uniformBufferWrite.dstSet = vkDescriptorSet;
     uniformBufferWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     uniformBufferWrite.dstBinding = 2;
     uniformBufferWrite.pBufferInfo = &uniformBufferInfo;
@@ -2051,7 +2027,7 @@ int main()
         vkCmdBindPipeline(vkCommandBuffers[i], VK_PIPELINE_BIND_POINT_RAY_TRACING_NV, vkPipeline);
 
         // Bind descriptor sets.
-        vkCmdBindDescriptorSets(vkCommandBuffers[i], VK_PIPELINE_BIND_POINT_RAY_TRACING_NV, vkPipelineLayout, 0, 1, &descriptorSet, 0, 0);
+        vkCmdBindDescriptorSets(vkCommandBuffers[i], VK_PIPELINE_BIND_POINT_RAY_TRACING_NV, vkPipelineLayout, 0, 1, &vkDescriptorSet, 0, 0);
 
         // Calculate shader binding offsets, which is pretty straight forward in our example.
         VkDeviceSize bindingOffsetRayGenShader = rayTracingProperties.shaderGroupBaseAlignment * INDEX_RAYGEN;
@@ -2326,16 +2302,52 @@ int main()
         vkDestroySemaphore(vkDevice, vkImageAvailableSemaphores[i], nullptr);
     }
 
-    // Destroy uniform buffer.
-    vkDestroyBuffer(vkDevice, vkUniformBuffer, nullptr);
-    vkFreeMemory(vkDevice, vkUniformBuffersMemory, nullptr);
-
-    // Destroy vertex buffer.
-    vkDestroyBuffer(vkDevice, vkVertexBuffer, nullptr);
-    vkFreeMemory(vkDevice, vkVertexBufferMemory, nullptr);
-
     // Destory command pool
     vkDestroyCommandPool(vkDevice, vkCommandPool, nullptr);
+
+    // Destroy descriptor pool.
+    vkDestroyDescriptorPool(vkDevice, vkDescriptorPool, nullptr);
+
+    // Destroy uniform buffer.
+    vkFreeMemory(vkDevice, vkUniformBufferMemory, nullptr);
+    vkDestroyBuffer(vkDevice, vkUniformBuffer, nullptr);
+
+    // Destroy shader binding table.
+    vkFreeMemory(vkDevice, vkShaderBindingTableMemory, nullptr);
+    vkDestroyBuffer(vkDevice, vkShaderBindingTable, nullptr);
+
+    // Destroy pipeline.
+    vkDestroyPipeline(vkDevice, vkPipeline, nullptr);
+    vkDestroyPipelineLayout(vkDevice, vkPipelineLayout, nullptr);
+
+    // Destroy descriptor set layout.
+    vkDestroyDescriptorSetLayout(vkDevice, vkDescriptorSetLayout, nullptr);
+
+    // Destroy shaders.
+    vkDestroyShaderModule(vkDevice, vkRayhitShaderModule, nullptr);
+    vkDestroyShaderModule(vkDevice, vkRaymissShaderModule, nullptr);
+    vkDestroyShaderModule(vkDevice, vkRaygenShaderModule, nullptr);
+
+    // Destroy storage image.
+    vkDestroyImageView(vkDevice, vkStorageImageView, nullptr);
+    vkFreeMemory(vkDevice, vkStorageImageMemory, nullptr);
+    vkDestroyImage(vkDevice, vkStorageImage, nullptr);
+
+    // Destroy TLAS.
+    vkFreeMemory(vkDevice, vkTlasMemory, nullptr);
+    vkDestroyAccelerationStructureNV(vkDevice, vkTopLevelAccelerationStructure, nullptr);
+
+    // Destroy instance buffer.
+    vkFreeMemory(vkDevice, vkInstanceBufferMemory, nullptr);
+    vkDestroyBuffer(vkDevice, vkInstanceBufferHandle, nullptr);
+
+    // Destroy BLAS.
+    vkFreeMemory(vkDevice, vkBlasMemory, nullptr);
+    vkDestroyAccelerationStructureNV(vkDevice, vkBottomLevelAccelerationStructure, nullptr);
+
+    // Destroy vertex buffer.
+    vkFreeMemory(vkDevice, vkVertexBufferMemory, nullptr);
+    vkDestroyBuffer(vkDevice, vkVertexBuffer, nullptr);
 
     // Destory swap chain image views.
     for (auto imageView : vkSwapChainImageViews) {
