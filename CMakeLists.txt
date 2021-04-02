@@ -34,3 +34,7 @@ endfunction(compile_shader)
 
 compile_shader(main.vert)
 compile_shader(main.frag)
+
+compile_shader(main2.rgen)
+compile_shader(main2.rmiss)
+compile_shader(main2.rchit)

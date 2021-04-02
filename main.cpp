@@ -87,6 +87,29 @@ constexpr const char* APPLICATION_NAME = "VKExample";
  */
 constexpr int MAX_FRAMES_IN_FLIGHT = 5;
 
+
+
+
+
+
+#include <functional>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 /**
  * Callback function that will be called each time a validation level produces a message.
  * @param messageSeverity Bitmask specifying which severities of events cause a debug messenger callback.
@@ -161,7 +184,9 @@ int main()
 #ifdef DEBUG_MODE
 
     // Add an extension to print debug messages.
-    extensionsList.push_back("VK_EXT_debug_utils");
+    extensionsList.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+    // Add extension required for RTX
+    extensionsList.push_back(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
 
     // ==========================================================================
     //              STEP 3: Select validation layers for debug
@@ -364,7 +389,10 @@ int main()
         // Swap chain extension is needed for drawing.
         // Any graphical card that aims to draw into a framebuffer
         // should support this extension.
-        VK_KHR_SWAPCHAIN_EXTENSION_NAME
+        VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+        // Ray tracing extensions.
+        VK_NV_RAY_TRACING_EXTENSION_NAME,
+        VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME
     };
 
     // Get a list of available physical devices.
@@ -586,7 +614,7 @@ int main()
     // Select a color format.
     VkSurfaceFormatKHR vkSelectedFormat = swapChainSupportDetails.formats[0];
     for (const auto& availableFormat : swapChainSupportDetails.formats) {
-        if (availableFormat.format == VK_FORMAT_B8G8R8A8_SRGB && availableFormat.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+        if (availableFormat.format == VK_FORMAT_B8G8R8A8_UNORM && availableFormat.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
             vkSelectedFormat = availableFormat;
             break;
         }
@@ -661,7 +689,7 @@ int main()
     vkSwapChainCreateInfo.imageColorSpace = vkSelectedFormat.colorSpace;
     vkSwapChainCreateInfo.imageExtent = vkSelectedExtent;
     vkSwapChainCreateInfo.imageArrayLayers = 1;
-    vkSwapChainCreateInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    vkSwapChainCreateInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     // We have two options for queue synchronization:
     // - VK_SHARING_MODE_EXCLUSIVE - An image ownership should be explicitly transferred
     //                               before using it in a differen queue. Best performance option.
@@ -866,566 +894,6 @@ int main()
     vkVertexInputInfo.vertexAttributeDescriptionCount = static_cast< uint32_t >(vkAttributeDescriptions.size());
     vkVertexInputInfo.pVertexAttributeDescriptions = vkAttributeDescriptions.data();
 
-    // ==========================================================================
-    //               STEP 15: Create a pipeline assembly state
-    // ==========================================================================
-    // Pipeline assembly state describes a geometry of the input data.
-    // In our case the input is a list of triangles.
-    // ==========================================================================
-
-    VkPipelineInputAssemblyStateCreateInfo vkInputAssembly{};
-    vkInputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-    vkInputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-    vkInputAssembly.primitiveRestartEnable = VK_FALSE;
-
-    // ==========================================================================
-    //                 STEP 16: Create a viewport and scissors
-    // ==========================================================================
-    // Viewport is a region of a framebuffer that will be used for renderring.
-    // Scissors define if some part of rendered image should be cut.
-    // In our example we define both viewport and scissors equal to
-    // the framebuffer size.
-    // ==========================================================================
-
-    // Create a viewport.
-    VkViewport vkViewport{};
-    vkViewport.x = 0.0f;
-    vkViewport.y = 0.0f;
-    vkViewport.width = static_cast< float >(vkSelectedExtent.width);
-    vkViewport.height = static_cast< float >(vkSelectedExtent.height);
-    vkViewport.minDepth = 0.0f;
-    vkViewport.maxDepth = 1.0f;
-
-    // Create scissors.
-    VkRect2D vkScissor{};
-    vkScissor.offset = {0, 0};
-    vkScissor.extent = vkSelectedExtent;
-
-    // Make a structure for framebuffer creation.
-    VkPipelineViewportStateCreateInfo vkViewportState{};
-    vkViewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
-    vkViewportState.viewportCount = 1;
-    vkViewportState.pViewports = &vkViewport;
-    vkViewportState.scissorCount = 1;
-    vkViewportState.pScissors = &vkScissor;
-
-    // ==========================================================================
-    //                 STEP 17: Create a rasterization stage
-    // ==========================================================================
-    // Rasterization stage takes primitives and rasterizes them to fragments
-    // pased to the fragment shader.
-    // ==========================================================================
-
-    // Rasterizer create info
-    VkPipelineRasterizationStateCreateInfo vkRasterizer{};
-    vkRasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-    vkRasterizer.depthClampEnable = VK_FALSE;
-    vkRasterizer.rasterizerDiscardEnable = VK_FALSE;
-    // Fill in triangles.
-    vkRasterizer.polygonMode = VK_POLYGON_MODE_FILL;
-    vkRasterizer.lineWidth = 1.0f;
-    // Enable face culling.
-    vkRasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
-    vkRasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
-    vkRasterizer.depthBiasEnable = VK_FALSE;
-    vkRasterizer.depthBiasConstantFactor = 0.0f;
-    vkRasterizer.depthBiasClamp = 0.0f;
-    vkRasterizer.depthBiasSlopeFactor = 0.0f;
-
-    // ==========================================================================
-    //                     STEP 18: Create an MSAA state
-    // ==========================================================================
-    // MultiSample Anti-Aliasing is used to make edges smoother by rendering
-    // them in higher resolution (having more then one fragment per pixel).
-    // ==========================================================================
-
-    // Select the maximal amount of samples supported by the device.
-    VkSampleCountFlagBits vkMsaaSamples = VK_SAMPLE_COUNT_1_BIT;
-    VkPhysicalDeviceProperties vkPhysicalDeviceProperties;
-    vkGetPhysicalDeviceProperties(vkPhysicalDevice, &vkPhysicalDeviceProperties);
-    VkSampleCountFlags vkSampleCounts = vkPhysicalDeviceProperties.limits.framebufferColorSampleCounts & vkPhysicalDeviceProperties.limits.framebufferDepthSampleCounts;
-    if (vkSampleCounts & VK_SAMPLE_COUNT_64_BIT) {
-        vkMsaaSamples = VK_SAMPLE_COUNT_64_BIT;
-    } else if (vkSampleCounts & VK_SAMPLE_COUNT_32_BIT) {
-        vkMsaaSamples = VK_SAMPLE_COUNT_32_BIT;
-    } else if (vkSampleCounts & VK_SAMPLE_COUNT_16_BIT) {
-        vkMsaaSamples = VK_SAMPLE_COUNT_16_BIT;
-    } else if (vkSampleCounts & VK_SAMPLE_COUNT_8_BIT) {
-        vkMsaaSamples = VK_SAMPLE_COUNT_8_BIT;
-    } else if (vkSampleCounts & VK_SAMPLE_COUNT_4_BIT) {
-        vkMsaaSamples = VK_SAMPLE_COUNT_4_BIT;
-    } else if (vkSampleCounts & VK_SAMPLE_COUNT_2_BIT) {
-        vkMsaaSamples = VK_SAMPLE_COUNT_2_BIT;
-    }
-
-    // Create a state for MSAA.
-    VkPipelineMultisampleStateCreateInfo vkMultisampling{};
-    vkMultisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-    vkMultisampling.sampleShadingEnable = VK_FALSE;
-    vkMultisampling.rasterizationSamples = vkMsaaSamples;
-    vkMultisampling.minSampleShading = 1.0f;
-    vkMultisampling.pSampleMask = nullptr;
-    vkMultisampling.alphaToCoverageEnable = VK_FALSE;
-    vkMultisampling.alphaToOneEnable = VK_FALSE;
-
-    // ==========================================================================
-    //                  STEP 19: Create a resolve attachment
-    // ==========================================================================
-    // In order to implement MSAA we should introduce a so-called
-    // resolve attachment. The attachment has only 1 sample and while rendering
-    // a multi-sampled image will be resolved to this attachment.
-    // To make it work we shoukld specify the resolve attachment
-    // during subpass creation.
-    // ==========================================================================
-
-    // Description of an image for resolve attachment.
-    VkImageCreateInfo vkColorImageInfo{};
-    vkColorImageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    vkColorImageInfo.imageType = VK_IMAGE_TYPE_2D;
-    vkColorImageInfo.extent.width = vkSelectedExtent.width;
-    vkColorImageInfo.extent.height = vkSelectedExtent.height;
-    vkColorImageInfo.extent.depth = 1;
-    vkColorImageInfo.mipLevels = 1;
-    vkColorImageInfo.arrayLayers = 1;
-    vkColorImageInfo.format = vkSelectedFormat.format;
-    vkColorImageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-    vkColorImageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    vkColorImageInfo.usage = VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-    vkColorImageInfo.samples = vkMsaaSamples;
-    vkColorImageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-    // Create an image for resolve attachment.
-    VkImage colorImage;
-    if (vkCreateImage(vkDevice, &vkColorImageInfo, nullptr, &colorImage) != VK_SUCCESS) {
-        std::cerr << "Failed to create an image!" << std::endl;
-        abort();
-    }
-
-    // Get memory requirements.
-    VkMemoryRequirements vkMemRequirements;
-    vkGetImageMemoryRequirements(vkDevice, colorImage, &vkMemRequirements);
-
-    // Description of memory allocation.
-    VkMemoryAllocateInfo vkColorImageAllocInfo{};
-    vkColorImageAllocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    vkColorImageAllocInfo.allocationSize = vkMemRequirements.size;
-    // Find memory type.
-    VkPhysicalDeviceMemoryProperties vkColorImageMemProperties;
-    vkGetPhysicalDeviceMemoryProperties(vkPhysicalDevice, &vkColorImageMemProperties);
-    uint32_t colorImageMemoryTypeInex = UINT32_MAX;
-    for (uint32_t i = 0; i < vkColorImageMemProperties.memoryTypeCount; i++) {
-        if ((vkMemRequirements.memoryTypeBits & (1 << i)) && (vkColorImageMemProperties.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)) {
-            colorImageMemoryTypeInex = i;
-            break;
-        }
-    }
-    vkColorImageAllocInfo.memoryTypeIndex = colorImageMemoryTypeInex;
-
-    // Allocate memory for resolve attachment.
-    VkDeviceMemory colorImageMemory;
-    if (vkAllocateMemory(vkDevice, &vkColorImageAllocInfo, nullptr, &colorImageMemory) != VK_SUCCESS) {
-        std::cerr << "Failed to allocate image memory!" << std::endl;
-        abort();
-    }
-
-    // Bind the image to the memory.
-    vkBindImageMemory(vkDevice, colorImage, colorImageMemory, 0);
-
-    // Describe an image view for resolve attachment.
-    VkImageViewCreateInfo vkColorImageViewInfo{};
-    vkColorImageViewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    vkColorImageViewInfo.image = colorImage;
-    vkColorImageViewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    vkColorImageViewInfo.format = vkSelectedFormat.format;
-    vkColorImageViewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    vkColorImageViewInfo.subresourceRange.baseMipLevel = 0;
-    vkColorImageViewInfo.subresourceRange.levelCount = 1;
-    vkColorImageViewInfo.subresourceRange.baseArrayLayer = 0;
-    vkColorImageViewInfo.subresourceRange.layerCount = 1;
-
-    // Create an image view for resolve attachment.
-    VkImageView colorImageView;
-    if (vkCreateImageView(vkDevice, &vkColorImageViewInfo, nullptr, &colorImageView) != VK_SUCCESS) {
-        std::cerr << "Failed to create texture image view!" << std::endl;
-        abort();
-    }
-
-    // Describe a resolve attachment.
-    VkAttachmentDescription colorAttachmentResolve{};
-    colorAttachmentResolve.format = vkSelectedFormat.format;
-    colorAttachmentResolve.samples = VK_SAMPLE_COUNT_1_BIT;
-    colorAttachmentResolve.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    colorAttachmentResolve.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    colorAttachmentResolve.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    colorAttachmentResolve.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    colorAttachmentResolve.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    colorAttachmentResolve.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-
-    // Resolve attachment reference.
-    VkAttachmentReference colorAttachmentResolveRef{};
-    colorAttachmentResolveRef.attachment = 2;
-    colorAttachmentResolveRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-
-    // ==========================================================================
-    //               STEP 20: Configure depth and stensil tests
-    // ==========================================================================
-    // Depth and stensil attachment is created and now we need to configure
-    // these tests. In this example we use regular VK_COMPARE_OP_LESS depth
-    // operation and disable stensil test.
-    // ==========================================================================
-
-    VkPipelineDepthStencilStateCreateInfo vkDepthStencil{};
-    vkDepthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-    vkDepthStencil.depthTestEnable = VK_TRUE;
-    vkDepthStencil.depthWriteEnable = VK_TRUE;
-    vkDepthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
-    vkDepthStencil.depthBoundsTestEnable = VK_FALSE;
-    vkDepthStencil.minDepthBounds = 0.0f;
-    vkDepthStencil.maxDepthBounds = 1.0f;
-    vkDepthStencil.stencilTestEnable = VK_FALSE;
-    vkDepthStencil.front = VkStencilOpState{};
-    vkDepthStencil.back = VkStencilOpState{};
-
-    // ==========================================================================
-    //                 STEP 21: Create a color blend state
-    // ==========================================================================
-    // Color blend state describes how fragments are applied to the result
-    // image. There might be options like mixing, but we switch off blending and
-    // simply put a new color instead of existing one.
-    // ==========================================================================
-
-    // Configuration per attached framebuffer.
-    VkPipelineColorBlendAttachmentState vkColorBlendAttachment{};
-    vkColorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-    vkColorBlendAttachment.blendEnable = VK_FALSE;
-    // Other fields are optional.
-    vkColorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
-    vkColorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO;
-    vkColorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
-    vkColorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-    vkColorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
-    vkColorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
-
-    // Global color blending settings.
-    VkPipelineColorBlendStateCreateInfo vkColorBlending{};
-    vkColorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-    vkColorBlending.attachmentCount = 1;
-    vkColorBlending.pAttachments = &vkColorBlendAttachment;
-    vkColorBlending.logicOpEnable = VK_FALSE;
-    // Other fields are optional.
-    vkColorBlending.logicOp = VK_LOGIC_OP_COPY;
-    vkColorBlending.blendConstants[0] = 0.0f;
-    vkColorBlending.blendConstants[1] = 0.0f;
-    vkColorBlending.blendConstants[2] = 0.0f;
-    vkColorBlending.blendConstants[3] = 0.0f;
-
-    // ==========================================================================
-    //                   STEP 22: Create a color attachment
-    // ==========================================================================
-    // Color attachment contains bytes of rendered image, so we should create
-    // one in order to display something.
-    // ==========================================================================
-
-    // Descriptor of a color attachment.
-    VkAttachmentDescription vkColorAttachment{};
-    vkColorAttachment.format = vkSelectedFormat.format;
-    vkColorAttachment.samples = vkMsaaSamples;
-    vkColorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    vkColorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    vkColorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    vkColorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    vkColorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    // Since we use MSAA, we should specify VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL here.
-    // If we disable MSAA, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR will be enough.
-    vkColorAttachment.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-
-    // Color attachment reference.
-    VkAttachmentReference colorAttachmentRef{};
-    colorAttachmentRef.attachment = 0;
-    colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-
-    // ==========================================================================
-    //            STEP 23: Create a depth and stensil attachment
-    // ==========================================================================
-    // Depth and stensil attachment is used to support two tests:
-    // - depth test - Makes sure that only the nearest fragment is displayed.
-    // - stensil test - Allows to cut some fragments depending on values of
-    //                  the stensil buffer.
-    // Although in this example we only need a depth test, both of them use
-    // the same attachment.
-    // ==========================================================================
-
-    // Descriptor of a depth attachment.
-    VkAttachmentDescription vkDepthAttachment{};
-    vkDepthAttachment.format = vkDepthFormat;
-    vkDepthAttachment.samples = vkMsaaSamples;
-    vkDepthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    vkDepthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    vkDepthAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    vkDepthAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    vkDepthAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    vkDepthAttachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-
-    // Depth attachment reference.
-    VkAttachmentReference vkDepthAttachmentRef{};
-    vkDepthAttachmentRef.attachment = 1;
-    vkDepthAttachmentRef.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-
-    // ==========================================================================
-    //                     STEP 24: Create a render pass
-    // ==========================================================================
-    // Render pass represents a collection of attachments, subpasses
-    // and dependencies between the subpasses.
-    // Subpasses allow to organize rendering process as a chain of operations.
-    // Each operation is applied to the result of the previous one.
-    // In the example we only need a single subpass.
-    // ==========================================================================
-
-    // Define a subpass and include both attachments (color and depth-stensil).
-    VkSubpassDescription vkSubpass{};
-    vkSubpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-    vkSubpass.colorAttachmentCount = 1;
-    vkSubpass.pColorAttachments = &colorAttachmentRef;
-    vkSubpass.pDepthStencilAttachment = &vkDepthAttachmentRef;
-    vkSubpass.pResolveAttachments = &colorAttachmentResolveRef;
-
-    // Define a subpass dependency.
-    VkSubpassDependency vkDependency{};
-    vkDependency.srcSubpass = VK_SUBPASS_EXTERNAL;
-    vkDependency.dstSubpass = 0;
-    vkDependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    vkDependency.srcAccessMask = 0;
-    vkDependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    vkDependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-
-    // Define a render pass and attach the subpass.
-    VkRenderPassCreateInfo vkRenderPassInfo{};
-    vkRenderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-    std::array< VkAttachmentDescription, 3 > attachments = { vkColorAttachment, vkDepthAttachment, colorAttachmentResolve };
-    vkRenderPassInfo.attachmentCount = static_cast< uint32_t >(attachments.size());
-    vkRenderPassInfo.pAttachments = attachments.data();
-    vkRenderPassInfo.subpassCount = 1;
-    vkRenderPassInfo.pSubpasses = &vkSubpass;
-    vkRenderPassInfo.dependencyCount = 1;
-    vkRenderPassInfo.pDependencies = &vkDependency;
-
-    // Create a render pass.
-    VkRenderPass vkRenderPass;
-    if (vkCreateRenderPass(vkDevice, &vkRenderPassInfo, nullptr, &vkRenderPass) != VK_SUCCESS) {
-        std::cerr << "Failed to create a render pass!" << std::endl;
-        abort();
-    }
-
-    // ==========================================================================
-    //                   STEP 25: Create a graphics pipeline
-    // ==========================================================================
-    // All stages prepared above should be combined into a graphics pipeline.
-    // ==========================================================================
-
-    // Define a pipeline layout.
-    VkPipelineLayoutCreateInfo vkPipelineLayoutInfo{};
-    vkPipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    vkPipelineLayoutInfo.setLayoutCount = 1;
-    vkPipelineLayoutInfo.pSetLayouts = &vkDescriptorSetLayout;
-    vkPipelineLayoutInfo.pushConstantRangeCount = 0;
-    vkPipelineLayoutInfo.pPushConstantRanges = nullptr;
-
-    // Create a pipeline layout.
-    VkPipelineLayout vkPipelineLayout;
-    if (vkCreatePipelineLayout(vkDevice, &vkPipelineLayoutInfo, nullptr, &vkPipelineLayout) != VK_SUCCESS) {
-        std::cerr << "Failed to creare a pipeline layout!" << std::endl;
-        abort();
-    }
-
-    // Define a pipeline and provide all stages created above.
-    VkGraphicsPipelineCreateInfo vkPipelineInfo{};
-    vkPipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-    vkPipelineInfo.stageCount = shaderStages.size();
-    vkPipelineInfo.pStages = shaderStages.data();
-    vkPipelineInfo.pVertexInputState = &vkVertexInputInfo;
-    vkPipelineInfo.pInputAssemblyState = &vkInputAssembly;
-    vkPipelineInfo.pViewportState = &vkViewportState;
-    vkPipelineInfo.pRasterizationState = &vkRasterizer;
-    vkPipelineInfo.pMultisampleState = &vkMultisampling;
-    vkPipelineInfo.pDepthStencilState = &vkDepthStencil;
-    vkPipelineInfo.pColorBlendState = &vkColorBlending;
-    vkPipelineInfo.pDynamicState = nullptr;
-    vkPipelineInfo.layout = vkPipelineLayout;
-    vkPipelineInfo.renderPass = vkRenderPass;
-    vkPipelineInfo.subpass = 0;
-    vkPipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
-    vkPipelineInfo.basePipelineIndex = -1;
-
-    // Create a pipeline.
-    VkPipeline vkGraphicsPipeline;
-    if (vkCreateGraphicsPipelines(vkDevice, VK_NULL_HANDLE, 1, &vkPipelineInfo, nullptr, &vkGraphicsPipeline) != VK_SUCCESS) {
-        std::cerr << "Failed to create a graphics pipeline!" << std::endl;
-        abort();
-    }
-
-    // ==========================================================================
-    //                 STEP 26: Create swap chain image views
-    // ==========================================================================
-    // After the swap chain is created, it contains Vulkan images that are
-    // used to transfer rendered picture. In order to work with images
-    // we should create image views.
-    // ==========================================================================
-
-    // Fetch Vulkan images associated to the swap chain.
-    std::vector< VkImage > vkSwapChainImages;
-    uint32_t vkSwapChainImageCount;
-    vkGetSwapchainImagesKHR(vkDevice, vkSwapChain, &vkSwapChainImageCount, nullptr);
-    vkSwapChainImages.resize(vkSwapChainImageCount);
-    vkGetSwapchainImagesKHR(vkDevice, vkSwapChain, &vkSwapChainImageCount, vkSwapChainImages.data());
-
-    // Create image views for each image.
-    std::vector< VkImageView > vkSwapChainImageViews;
-    vkSwapChainImageViews.resize(vkSwapChainImageCount);
-    for (size_t i = 0; i < vkSwapChainImageCount; i++) {
-        // Image view create info.
-        VkImageViewCreateInfo createInfo{};
-        createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-        createInfo.image = vkSwapChainImages[i];
-        createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        createInfo.format = vkSelectedFormat.format;
-        createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
-        createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
-        createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
-        createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
-        createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        createInfo.subresourceRange.baseMipLevel = 0;
-        createInfo.subresourceRange.levelCount = 1;
-        createInfo.subresourceRange.baseArrayLayer = 0;
-        createInfo.subresourceRange.layerCount = 1;
-        // Create an image view.
-        if (vkCreateImageView(vkDevice, &createInfo, nullptr, &vkSwapChainImageViews[i]) != VK_SUCCESS) {
-            std::cerr << "Failed to create an image view #" << i << "!" << std::endl;
-            abort();
-        }
-    }
-
-    // ==========================================================================
-    //                  STEP 27: Create a depth buffer image
-    // ==========================================================================
-    // In order to use a depth buffer, we should create an image.
-    // Unlike swap buffer images, we need only one depth image and it should
-    // be created explicitly.
-    // ==========================================================================
-
-    // Describe a depth image.
-    VkImageCreateInfo vkImageInfo{};
-    vkImageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    vkImageInfo.imageType = VK_IMAGE_TYPE_2D;
-    vkImageInfo.extent.width = vkSelectedExtent.width;
-    vkImageInfo.extent.height = vkSelectedExtent.height;
-    vkImageInfo.extent.depth = 1;
-    vkImageInfo.mipLevels = 1;
-    vkImageInfo.arrayLayers = 1;
-    vkImageInfo.format = vkDepthFormat;
-    vkImageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-    vkImageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    vkImageInfo.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
-    vkImageInfo.samples = vkMsaaSamples;
-    vkImageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-    // Create a depth image.
-    VkImage vkDepthImage;
-    if (vkCreateImage(vkDevice, &vkImageInfo, nullptr, &vkDepthImage) != VK_SUCCESS) {
-        std::cerr << "Failed to create a depth image!" << std::endl;
-        abort();
-    }
-
-    // Retrieve memory requirements for the depth image.
-    VkMemoryRequirements vkmDepthMemRequirements;
-    vkGetImageMemoryRequirements(vkDevice, vkDepthImage, &vkmDepthMemRequirements);
-
-    // Define memory allocate info.
-    VkMemoryAllocateInfo memoryAllocInfo{};
-    memoryAllocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    memoryAllocInfo.allocationSize = vkmDepthMemRequirements.size;
-    // Find a suitable memory type.
-    uint32_t memTypeIndex = UINT32_MAX;
-    VkPhysicalDeviceMemoryProperties memProperties;
-    vkGetPhysicalDeviceMemoryProperties(vkPhysicalDevice, &memProperties);
-    for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
-        if ((vkmDepthMemRequirements.memoryTypeBits & (1 << i)) &&
-                (memProperties.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)) {
-            memTypeIndex = i;
-            break;
-        }
-    }
-    memoryAllocInfo.memoryTypeIndex = memTypeIndex;
-
-    // Allocate memory for the depth image.
-    VkDeviceMemory vkDepthImageMemory;
-    if (vkAllocateMemory(vkDevice, &memoryAllocInfo, nullptr, &vkDepthImageMemory) != VK_SUCCESS) {
-        std::cerr << "Failed to allocate image memory!" << std::endl;
-        abort();
-    }
-
-    // Bind the image to the allocated memory.
-    vkBindImageMemory(vkDevice, vkDepthImage, vkDepthImageMemory, 0);
-
-    // ==========================================================================
-    //                STEP 28: Create a depth buffer image view
-    // ==========================================================================
-    // Similarly to swap buffer images, we need an image view to use it.
-    // ==========================================================================
-
-    // Destribe an image view.
-    VkImageViewCreateInfo vkViewInfo{};
-    vkViewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    vkViewInfo.image = vkDepthImage;
-    vkViewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    vkViewInfo.format = vkDepthFormat;
-    vkViewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-    vkViewInfo.subresourceRange.baseMipLevel = 0;
-    vkViewInfo.subresourceRange.levelCount = 1;
-    vkViewInfo.subresourceRange.baseArrayLayer = 0;
-    vkViewInfo.subresourceRange.layerCount = 1;
-
-    // Create an image view.
-    VkImageView vkDepthImageView;
-    if (vkCreateImageView(vkDevice, &vkViewInfo, nullptr, &vkDepthImageView) != VK_SUCCESS) {
-        std::cerr << "Failed to create a texture image view!" << std::endl;
-        abort();
-    }
-
-    // ==========================================================================
-    //                     STEP 29: Create framebuffers
-    // ==========================================================================
-    // Framebuffer refers to all attachments that are output of the rendering
-    // process.
-    // ==========================================================================
-
-    // Create framebuffers.
-    std::vector< VkFramebuffer > vkSwapChainFramebuffers;
-    vkSwapChainFramebuffers.resize(vkSwapChainImageViews.size());
-    for (size_t i = 0; i < vkSwapChainImageViews.size(); i++) {
-        // We have only two attachments: color and depth.
-        // Depth attachment is shared.
-        std::array< VkImageView, 3 > attachments = {
-            colorImageView,
-            vkDepthImageView,
-            vkSwapChainImageViews[i]
-        };
-
-        // Describe a framebuffer.
-        VkFramebufferCreateInfo vkFramebufferInfo{};
-        vkFramebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-        vkFramebufferInfo.renderPass = vkRenderPass;
-        vkFramebufferInfo.attachmentCount = static_cast<uint32_t>(attachments.size());;
-        vkFramebufferInfo.pAttachments =  attachments.data();
-        vkFramebufferInfo.width = vkSelectedExtent.width;
-        vkFramebufferInfo.height = vkSelectedExtent.height;
-        vkFramebufferInfo.layers = 1;
-
-        // Create a framebuffer.
-        if (vkCreateFramebuffer(vkDevice, &vkFramebufferInfo, nullptr, &vkSwapChainFramebuffers[i]) != VK_SUCCESS) {
-            std::cerr << "Failed to create a framebuffer!" << std::endl;
-            abort();
-        }
-    }
 
     // ==========================================================================
     //                    STEP 30: Create a vertex buffer
@@ -1438,50 +906,60 @@ int main()
     // Each triplet of vertices represent one triangle.
     // We do not use index buffer, so some vertices are duplicated.
     // Each plane has its own color.
-    std::vector< Vertex > vertices
+    /*std::vector< glm::vec3 > vertices
     {
-        { { -0.5f, -0.5f, -0.5f }, { 1.0f, 0.0f, 0.0f } },
-        { { -0.5f,  0.5f, -0.5f }, { 1.0f, 0.0f, 0.0f } },
-        { {  0.5f, -0.5f, -0.5f }, { 1.0f, 0.0f, 0.0f } },
-        { {  0.5f,  0.5f, -0.5f }, { 1.0f, 0.0f, 0.0f } },
-        { {  0.5f, -0.5f, -0.5f }, { 1.0f, 0.0f, 0.0f } },
-        { { -0.5f,  0.5f, -0.5f }, { 1.0f, 0.0f, 0.0f } },
+        { -0.5f, -0.5f, -0.5f },
+        { -0.5f,  0.5f, -0.5f },
+        {  0.5f, -0.5f, -0.5f },
+        {  0.5f,  0.5f, -0.5f },
+        {  0.5f, -0.5f, -0.5f },
+        { -0.5f,  0.5f, -0.5f },
 
-        { { -0.5f, -0.5f, -0.5f }, { 1.0f, 1.0f, 0.0f } },
-        { { -0.5f, -0.5f,  0.5f }, { 1.0f, 1.0f, 0.0f } },
-        { { -0.5f,  0.5f, -0.5f }, { 1.0f, 1.0f, 0.0f } },
-        { { -0.5f,  0.5f,  0.5f }, { 1.0f, 1.0f, 0.0f } },
-        { { -0.5f,  0.5f, -0.5f }, { 1.0f, 1.0f, 0.0f } },
-        { { -0.5f, -0.5f,  0.5f }, { 1.0f, 1.0f, 0.0f } },
+        { -0.5f, -0.5f, -0.5f },
+        { -0.5f, -0.5f,  0.5f },
+        { -0.5f,  0.5f, -0.5f },
+        { -0.5f,  0.5f,  0.5f },
+        { -0.5f,  0.5f, -0.5f },
+        { -0.5f, -0.5f,  0.5f },
 
-        { {  0.5f, -0.5f,  0.5f }, { 1.0f, 1.0f, 1.0f } },
-        { {  0.5f, -0.5f, -0.5f }, { 1.0f, 1.0f, 1.0f } },
-        { {  0.5f,  0.5f,  0.5f }, { 1.0f, 1.0f, 1.0f } },
-        { {  0.5f,  0.5f, -0.5f }, { 1.0f, 1.0f, 1.0f } },
-        { {  0.5f,  0.5f,  0.5f }, { 1.0f, 1.0f, 1.0f } },
-        { {  0.5f, -0.5f, -0.5f }, { 1.0f, 1.0f, 1.0f } },
+        {  0.5f, -0.5f,  0.5f },
+        {  0.5f, -0.5f, -0.5f },
+        {  0.5f,  0.5f,  0.5f },
+        {  0.5f,  0.5f, -0.5f },
+        {  0.5f,  0.5f,  0.5f },
+        {  0.5f, -0.5f, -0.5f },
 
-        { { -0.5f,  0.5f,  0.5f }, { 0.0f, 1.0f, 0.0f } },
-        { { -0.5f, -0.5f,  0.5f }, { 0.0f, 1.0f, 0.0f } },
-        { {  0.5f,  0.5f,  0.5f }, { 0.0f, 1.0f, 0.0f } },
-        { {  0.5f, -0.5f,  0.5f }, { 0.0f, 1.0f, 0.0f } },
-        { {  0.5f,  0.5f,  0.5f }, { 0.0f, 1.0f, 0.0f } },
-        { { -0.5f, -0.5f,  0.5f }, { 0.0f, 1.0f, 0.0f } },
+        { -0.5f,  0.5f,  0.5f },
+        { -0.5f, -0.5f,  0.5f },
+        {  0.5f,  0.5f,  0.5f },
+        {  0.5f, -0.5f,  0.5f },
+        {  0.5f,  0.5f,  0.5f },
+        { -0.5f, -0.5f,  0.5f },
 
-        { {  0.5f,  0.5f, -0.5f }, { 1.0f, 0.0f, 1.0f } },
-        { { -0.5f,  0.5f, -0.5f }, { 1.0f, 0.0f, 1.0f } },
-        { {  0.5f,  0.5f,  0.5f }, { 1.0f, 0.0f, 1.0f } },
-        { { -0.5f,  0.5f,  0.5f }, { 1.0f, 0.0f, 1.0f } },
-        { {  0.5f,  0.5f,  0.5f }, { 1.0f, 0.0f, 1.0f } },
-        { { -0.5f,  0.5f, -0.5f }, { 1.0f, 0.0f, 1.0f } },
+        {  0.5f,  0.5f, -0.5f },
+        { -0.5f,  0.5f, -0.5f },
+        {  0.5f,  0.5f,  0.5f },
+        { -0.5f,  0.5f,  0.5f },
+        {  0.5f,  0.5f,  0.5f },
+        { -0.5f,  0.5f, -0.5f },
 
-        { { -0.5f, -0.5f,  0.5f }, { 0.0f, 1.0f, 1.0f } },
-        { { -0.5f, -0.5f, -0.5f }, { 0.0f, 1.0f, 1.0f } },
-        { {  0.5f, -0.5f, -0.5f }, { 0.0f, 1.0f, 1.0f } },
-        { { -0.5f, -0.5f,  0.5f }, { 0.0f, 1.0f, 1.0f } },
-        { {  0.5f, -0.5f, -0.5f }, { 0.0f, 1.0f, 1.0f } },
-        { {  0.5f, -0.5f,  0.5f }, { 0.0f, 1.0f, 1.0f } },
-    };
+        { -0.5f, -0.5f,  0.5f },
+        { -0.5f, -0.5f, -0.5f },
+        {  0.5f, -0.5f, -0.5f },
+        { -0.5f, -0.5f,  0.5f },
+        {  0.5f, -0.5f, -0.5f },
+        {  0.5f, -0.5f,  0.5f },
+    };*/
+
+    std::vector<Vertex> vertices = {
+                        { {  1.0f,  1.0f, 0.0f } },
+                        { { -1.0f,  1.0f, 0.0f } },
+                        { {  0.0f, -1.0f, 0.0f } },
+
+                        { { -1.0f,  1.0f, 0.0f } },
+                        { {  1.0f,  1.0f, 0.0f } },
+                        { {  0.0f, -1.0f, 0.0f } },
+                    };
 
     // Calculate buffer size.
     VkDeviceSize vertexBufferSize = sizeof(vertices[0]) * vertices.size();
@@ -1537,6 +1015,1047 @@ int main()
     memcpy(vertexBufferMemoryData, vertices.data(), (size_t) vertexBufferSize);
     vkUnmapMemory(vkDevice, vkVertexBufferMemory);
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    PFN_vkCreateAccelerationStructureNV vkCreateAccelerationStructureNV;
+    PFN_vkDestroyAccelerationStructureNV vkDestroyAccelerationStructureNV;
+    PFN_vkBindAccelerationStructureMemoryNV vkBindAccelerationStructureMemoryNV;
+    PFN_vkGetAccelerationStructureHandleNV vkGetAccelerationStructureHandleNV;
+    PFN_vkGetAccelerationStructureMemoryRequirementsNV vkGetAccelerationStructureMemoryRequirementsNV;
+    PFN_vkCmdBuildAccelerationStructureNV vkCmdBuildAccelerationStructureNV;
+    PFN_vkCreateRayTracingPipelinesNV vkCreateRayTracingPipelinesNV;
+    PFN_vkGetRayTracingShaderGroupHandlesNV vkGetRayTracingShaderGroupHandlesNV;
+    PFN_vkCmdTraceRaysNV vkCmdTraceRaysNV;
+
+
+    // Ray tracing acceleration structure
+    struct AccelerationStructure {
+        VkDeviceMemory memory;
+        VkAccelerationStructureNV accelerationStructure;
+        uint64_t handle;
+    };
+
+    AccelerationStructure bottomLevelAS;
+    AccelerationStructure topLevelAS;
+
+
+
+    vkCreateAccelerationStructureNV = reinterpret_cast<PFN_vkCreateAccelerationStructureNV>(vkGetDeviceProcAddr(vkDevice, "vkCreateAccelerationStructureNV"));
+    vkDestroyAccelerationStructureNV = reinterpret_cast<PFN_vkDestroyAccelerationStructureNV>(vkGetDeviceProcAddr(vkDevice, "vkDestroyAccelerationStructureNV"));
+    vkBindAccelerationStructureMemoryNV = reinterpret_cast<PFN_vkBindAccelerationStructureMemoryNV>(vkGetDeviceProcAddr(vkDevice, "vkBindAccelerationStructureMemoryNV"));
+    vkGetAccelerationStructureHandleNV = reinterpret_cast<PFN_vkGetAccelerationStructureHandleNV>(vkGetDeviceProcAddr(vkDevice, "vkGetAccelerationStructureHandleNV"));
+    vkGetAccelerationStructureMemoryRequirementsNV = reinterpret_cast<PFN_vkGetAccelerationStructureMemoryRequirementsNV>(vkGetDeviceProcAddr(vkDevice, "vkGetAccelerationStructureMemoryRequirementsNV"));
+    vkCmdBuildAccelerationStructureNV = reinterpret_cast<PFN_vkCmdBuildAccelerationStructureNV>(vkGetDeviceProcAddr(vkDevice, "vkCmdBuildAccelerationStructureNV"));
+    vkCreateRayTracingPipelinesNV = reinterpret_cast<PFN_vkCreateRayTracingPipelinesNV>(vkGetDeviceProcAddr(vkDevice, "vkCreateRayTracingPipelinesNV"));
+    vkGetRayTracingShaderGroupHandlesNV = reinterpret_cast<PFN_vkGetRayTracingShaderGroupHandlesNV>(vkGetDeviceProcAddr(vkDevice, "vkGetRayTracingShaderGroupHandlesNV"));
+    vkCmdTraceRaysNV = reinterpret_cast<PFN_vkCmdTraceRaysNV>(vkGetDeviceProcAddr(vkDevice, "vkCmdTraceRaysNV"));
+
+    // Query the ray tracing properties of the current implementation, we will need them later on
+    VkPhysicalDeviceRayTracingPropertiesNV rayTracingProperties{};
+    rayTracingProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PROPERTIES_NV;
+    VkPhysicalDeviceProperties2 deviceProps2{};
+    deviceProps2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+    deviceProps2.pNext = &rayTracingProperties;
+    vkGetPhysicalDeviceProperties2(vkPhysicalDevice, &deviceProps2);
+
+    VkGeometryNV geometry{};
+    geometry.sType = VK_STRUCTURE_TYPE_GEOMETRY_NV;
+    geometry.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_NV;
+    geometry.geometry.triangles.sType = VK_STRUCTURE_TYPE_GEOMETRY_TRIANGLES_NV;
+    geometry.geometry.triangles.vertexData = vkVertexBuffer;
+    geometry.geometry.triangles.vertexOffset = 0;
+    geometry.geometry.triangles.vertexCount = static_cast<uint32_t>(vertices.size());
+    geometry.geometry.triangles.vertexStride = sizeof(glm::vec3);
+    geometry.geometry.triangles.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
+    geometry.geometry.triangles.indexData = 0;
+    geometry.geometry.triangles.indexOffset = 0;
+    geometry.geometry.triangles.indexCount = 0;
+    geometry.geometry.triangles.indexType = VK_INDEX_TYPE_NONE_NV;
+    geometry.geometry.triangles.transformData = VK_NULL_HANDLE;
+    geometry.geometry.triangles.transformOffset = 0;
+    geometry.geometry.aabbs = {};
+    geometry.geometry.aabbs.sType = { VK_STRUCTURE_TYPE_GEOMETRY_AABB_NV };
+    geometry.flags = VK_GEOMETRY_OPAQUE_BIT_NV;
+
+    // CREATE BLAS
+
+    {
+        VkAccelerationStructureInfoNV accelerationStructureInfo{};
+        accelerationStructureInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_INFO_NV;
+        accelerationStructureInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_NV;
+        accelerationStructureInfo.instanceCount = 0;
+        accelerationStructureInfo.geometryCount = 1;
+        accelerationStructureInfo.pGeometries = &geometry;
+
+        VkAccelerationStructureCreateInfoNV accelerationStructureCI{};
+        accelerationStructureCI.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_NV;
+        accelerationStructureCI.info = accelerationStructureInfo;
+        /*VK_CHECK_RESULT(*/
+        vkCreateAccelerationStructureNV(vkDevice, &accelerationStructureCI, nullptr, &bottomLevelAS.accelerationStructure);
+
+        VkAccelerationStructureMemoryRequirementsInfoNV memoryRequirementsInfo{};
+        memoryRequirementsInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_MEMORY_REQUIREMENTS_INFO_NV;
+        memoryRequirementsInfo.type = VK_ACCELERATION_STRUCTURE_MEMORY_REQUIREMENTS_TYPE_OBJECT_NV;
+        memoryRequirementsInfo.accelerationStructure = bottomLevelAS.accelerationStructure;
+
+        VkMemoryRequirements2 memoryRequirements2{};
+        memoryRequirements2.sType = VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2;
+        vkGetAccelerationStructureMemoryRequirementsNV(vkDevice, &memoryRequirementsInfo, &memoryRequirements2);
+
+        VkMemoryAllocateInfo memoryAllocateInfo{};
+        memoryAllocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        memoryAllocateInfo.allocationSize = memoryRequirements2.memoryRequirements.size;
+
+        VkPhysicalDeviceMemoryProperties vkBufferMemProperties;
+        vkGetPhysicalDeviceMemoryProperties(vkPhysicalDevice, &vkBufferMemProperties);
+
+        uint32_t colorImageMemoryTypeInex = UINT32_MAX;
+        for (uint32_t i = 0; i < vkBufferMemProperties.memoryTypeCount; i++) {
+            if ((memoryRequirements2.memoryRequirements.memoryTypeBits & (1 << i)) && (vkBufferMemProperties.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)) {
+                colorImageMemoryTypeInex = i;
+                break;
+            }
+        }
+
+        memoryAllocateInfo.memoryTypeIndex = colorImageMemoryTypeInex;
+        /*VK_CHECK_RESULT(*/
+        vkAllocateMemory(vkDevice, &memoryAllocateInfo, nullptr, &bottomLevelAS.memory);
+
+        VkBindAccelerationStructureMemoryInfoNV accelerationStructureMemoryInfo{};
+        accelerationStructureMemoryInfo.sType = VK_STRUCTURE_TYPE_BIND_ACCELERATION_STRUCTURE_MEMORY_INFO_NV;
+        accelerationStructureMemoryInfo.accelerationStructure = bottomLevelAS.accelerationStructure;
+        accelerationStructureMemoryInfo.memory = bottomLevelAS.memory;
+        /*VK_CHECK_RESULT(*/
+        vkBindAccelerationStructureMemoryNV(vkDevice, 1, &accelerationStructureMemoryInfo);
+
+        /*VK_CHECK_RESULT(*/
+        vkGetAccelerationStructureHandleNV(vkDevice, bottomLevelAS.accelerationStructure, sizeof(uint64_t), &bottomLevelAS.handle);
+    }
+
+    // END CREATE BLAS
+
+    VkTransformMatrixKHR transform = {
+        1.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 1.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 1.0f, 0.0f,
+    };
+
+    VkAccelerationStructureInstanceKHR geometryInstance{};
+    geometryInstance.transform = transform;
+    geometryInstance.instanceCustomIndex = 0;
+    geometryInstance.mask = 0xff;
+    geometryInstance.instanceShaderBindingTableRecordOffset = 0;
+    geometryInstance.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_CULL_DISABLE_BIT_NV;
+    geometryInstance.accelerationStructureReference = bottomLevelAS.handle;
+
+    VkBuffer m_instance_buffer_handle;
+
+    {
+        VkBuffer m_handle;
+        VkDeviceMemory m_memory;
+        VkDeviceSize m_size;
+
+        // Describe a buffer.
+        VkBufferCreateInfo vkVertexBufferInfo{};
+        vkVertexBufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        vkVertexBufferInfo.size = sizeof(VkAccelerationStructureInstanceKHR);
+        vkVertexBufferInfo.usage = VK_BUFFER_USAGE_RAY_TRACING_BIT_NV;
+        vkVertexBufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+        // Create a buffer.
+        if (vkCreateBuffer(vkDevice, &vkVertexBufferInfo, nullptr, &m_instance_buffer_handle) != VK_SUCCESS) {
+            std::cerr << "Failed to create a vertex buffer!" << std::endl;
+            abort();
+        }
+
+        // Retrieve memory requirements for the vertex buffer.
+        VkMemoryRequirements vkVertexBufferMemRequirements;
+        vkGetBufferMemoryRequirements(vkDevice, m_instance_buffer_handle, &vkVertexBufferMemRequirements);
+
+        // Define memory allocate info.
+        VkMemoryAllocateInfo vkVertexBufferAllocInfo{};
+        vkVertexBufferAllocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        vkVertexBufferAllocInfo.allocationSize = vkVertexBufferMemRequirements.size;
+        // Find a suitable memory type.
+
+
+
+        VkPhysicalDeviceMemoryProperties vkBufferMemProperties;
+        vkGetPhysicalDeviceMemoryProperties(vkPhysicalDevice, &vkBufferMemProperties);
+
+        uint32_t colorImageMemoryTypeInex = UINT32_MAX;
+        for (uint32_t i = 0; i < vkBufferMemProperties.memoryTypeCount; i++) {
+            if ((vkVertexBufferMemRequirements.memoryTypeBits & (1 << i)) && (vkBufferMemProperties.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)
+                                                                          && (vkBufferMemProperties.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT )) {
+                colorImageMemoryTypeInex = i;
+                break;
+            }
+        }
+
+
+
+        vkVertexBufferAllocInfo.memoryTypeIndex = colorImageMemoryTypeInex;
+        // Allocate memory for the vertex buffer.
+        if (vkAllocateMemory(vkDevice, &vkVertexBufferAllocInfo, nullptr, &m_memory) != VK_SUCCESS) {
+            std::cerr << "Failed to allocate memroy for the vertex buffer!" << std::endl;
+            abort();
+        }
+
+        // Bind the buffer to the allocated memory.
+        vkBindBufferMemory(vkDevice, m_instance_buffer_handle, m_memory, 0);
+
+
+
+
+
+
+
+        // Copy our vertices to the allocated memory.
+        void* vertexBufferMemoryData;
+        vkMapMemory(vkDevice, m_memory, 0, sizeof(geometryInstance), 0, &vertexBufferMemoryData);
+        memcpy(vertexBufferMemoryData, &geometryInstance, sizeof(geometryInstance));
+        vkUnmapMemory(vkDevice, m_memory);
+    }
+
+    // CREATE TLAS
+    {
+        VkAccelerationStructureInfoNV accelerationStructureInfo{};
+        accelerationStructureInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_INFO_NV;
+        accelerationStructureInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_NV;
+        accelerationStructureInfo.instanceCount = 2;
+        accelerationStructureInfo.geometryCount = 0;
+
+        VkAccelerationStructureCreateInfoNV accelerationStructureCI{};
+        accelerationStructureCI.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_NV;
+        accelerationStructureCI.info = accelerationStructureInfo;
+        /*VK_CHECK_RESULT*/
+        vkCreateAccelerationStructureNV(vkDevice, &accelerationStructureCI, nullptr, &topLevelAS.accelerationStructure);
+
+        VkAccelerationStructureMemoryRequirementsInfoNV memoryRequirementsInfo{};
+        memoryRequirementsInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_MEMORY_REQUIREMENTS_INFO_NV;
+        memoryRequirementsInfo.type = VK_ACCELERATION_STRUCTURE_MEMORY_REQUIREMENTS_TYPE_OBJECT_NV;
+        memoryRequirementsInfo.accelerationStructure = topLevelAS.accelerationStructure;
+
+        VkMemoryRequirements2 memoryRequirements2{};
+        memoryRequirements2.sType = VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2;
+        vkGetAccelerationStructureMemoryRequirementsNV(vkDevice, &memoryRequirementsInfo, &memoryRequirements2);
+
+        VkMemoryAllocateInfo memoryAllocateInfo{};
+        memoryAllocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        memoryAllocateInfo.allocationSize = memoryRequirements2.memoryRequirements.size;
+
+        VkPhysicalDeviceMemoryProperties vkBufferMemProperties;
+        vkGetPhysicalDeviceMemoryProperties(vkPhysicalDevice, &vkBufferMemProperties);
+
+        uint32_t colorImageMemoryTypeInex = UINT32_MAX;
+        for (uint32_t i = 0; i < vkBufferMemProperties.memoryTypeCount; i++) {
+            if ((memoryRequirements2.memoryRequirements.memoryTypeBits & (1 << i)) && (vkBufferMemProperties.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)) {
+                colorImageMemoryTypeInex = i;
+                break;
+            }
+        }
+
+        /*VK_CHECK_RESULT*/
+        vkAllocateMemory(vkDevice, &memoryAllocateInfo, nullptr, &topLevelAS.memory);
+
+        VkBindAccelerationStructureMemoryInfoNV accelerationStructureMemoryInfo{};
+        accelerationStructureMemoryInfo.sType = VK_STRUCTURE_TYPE_BIND_ACCELERATION_STRUCTURE_MEMORY_INFO_NV;
+        accelerationStructureMemoryInfo.accelerationStructure = topLevelAS.accelerationStructure;
+        accelerationStructureMemoryInfo.memory = topLevelAS.memory;
+        /*VK_CHECK_RESULT*/
+        vkBindAccelerationStructureMemoryNV(vkDevice, 1, &accelerationStructureMemoryInfo);
+
+        /*VK_CHECK_RESULT*/
+        vkGetAccelerationStructureHandleNV(vkDevice, topLevelAS.accelerationStructure, sizeof(uint64_t), &topLevelAS.handle);
+    }
+    // END CREATE TLAS
+
+    // Acceleration structure build requires some scratch space to store temporary information
+    VkAccelerationStructureMemoryRequirementsInfoNV memoryRequirementsInfo{};
+    memoryRequirementsInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_MEMORY_REQUIREMENTS_INFO_NV;
+    memoryRequirementsInfo.type = VK_ACCELERATION_STRUCTURE_MEMORY_REQUIREMENTS_TYPE_BUILD_SCRATCH_NV;
+
+    VkMemoryRequirements2 memReqBottomLevelAS;
+    memReqBottomLevelAS.sType = VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2;
+    memoryRequirementsInfo.accelerationStructure = bottomLevelAS.accelerationStructure;
+    vkGetAccelerationStructureMemoryRequirementsNV(vkDevice, &memoryRequirementsInfo, &memReqBottomLevelAS);
+
+    VkMemoryRequirements2 memReqTopLevelAS;
+    memReqTopLevelAS.sType = VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2;
+    memoryRequirementsInfo.accelerationStructure = topLevelAS.accelerationStructure;
+    vkGetAccelerationStructureMemoryRequirementsNV(vkDevice, &memoryRequirementsInfo, &memReqTopLevelAS);
+
+    const VkDeviceSize scratchBufferSize = std::max(memReqBottomLevelAS.memoryRequirements.size, memReqTopLevelAS.memoryRequirements.size);
+
+    VkBuffer m_scratch_buffer_handle;
+
+    {
+        VkBuffer m_handle;
+        VkDeviceMemory m_memory;
+        VkDeviceSize m_size;
+
+        // Describe a buffer.
+        VkBufferCreateInfo vkVertexBufferInfo{};
+        vkVertexBufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        vkVertexBufferInfo.size = scratchBufferSize;
+        vkVertexBufferInfo.usage = VK_BUFFER_USAGE_RAY_TRACING_BIT_NV;
+        vkVertexBufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+        // Create a buffer.
+        if (vkCreateBuffer(vkDevice, &vkVertexBufferInfo, nullptr, &m_scratch_buffer_handle) != VK_SUCCESS) {
+            std::cerr << "Failed to create a vertex buffer!" << std::endl;
+            abort();
+        }
+
+        // Retrieve memory requirements for the vertex buffer.
+        VkMemoryRequirements vkVertexBufferMemRequirements;
+        vkGetBufferMemoryRequirements(vkDevice, m_scratch_buffer_handle, &vkVertexBufferMemRequirements);
+
+        // Define memory allocate info.
+        VkMemoryAllocateInfo vkVertexBufferAllocInfo{};
+        vkVertexBufferAllocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        vkVertexBufferAllocInfo.allocationSize = vkVertexBufferMemRequirements.size;
+        // Find a suitable memory type.
+
+
+
+        VkPhysicalDeviceMemoryProperties vkBufferMemProperties;
+        vkGetPhysicalDeviceMemoryProperties(vkPhysicalDevice, &vkBufferMemProperties);
+
+        uint32_t colorImageMemoryTypeInex = UINT32_MAX;
+        for (uint32_t i = 0; i < vkBufferMemProperties.memoryTypeCount; i++) {
+            if ((vkVertexBufferMemRequirements.memoryTypeBits & (1 << i)) && (vkBufferMemProperties.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)) {
+                colorImageMemoryTypeInex = i;
+                break;
+            }
+        }
+
+
+
+        vkVertexBufferAllocInfo.memoryTypeIndex = colorImageMemoryTypeInex;
+        // Allocate memory for the vertex buffer.
+        if (vkAllocateMemory(vkDevice, &vkVertexBufferAllocInfo, nullptr, &m_memory) != VK_SUCCESS) {
+            std::cerr << "Failed to allocate memroy for the vertex buffer!" << std::endl;
+            abort();
+        }
+
+        // Bind the buffer to the allocated memory.
+        vkBindBufferMemory(vkDevice, m_scratch_buffer_handle, m_memory, 0);
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    // Pick a graphics queue.
+    VkQueue vkGraphicsQueue;
+    vkGetDeviceQueue(vkDevice, queueFamilyIndices.graphicsFamily.value(), 0, &vkGraphicsQueue);
+
+
+
+
+
+
+
+
+
+
+
+
+
+    auto executeCommandBuffer = [=](std::function< void (const VkCommandBuffer&) > executeFunction)
+    {
+        // Describe a command pool.
+        VkCommandPoolCreateInfo vkASPoolInfo{};
+        vkASPoolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+        vkASPoolInfo.queueFamilyIndex = queueFamilyIndices.graphicsFamily.value();
+        vkASPoolInfo.flags = 0;
+
+        VkCommandPool vkASCommandPool;
+        if (vkCreateCommandPool(vkDevice, &vkASPoolInfo, nullptr, &vkASCommandPool) != VK_SUCCESS) {
+            std::cerr << "Failed to create a command pool!" << std::endl;
+            abort();
+        }
+
+        VkCommandBufferAllocateInfo cmdBufAllocateInfo {};
+        cmdBufAllocateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        cmdBufAllocateInfo.commandPool = vkASCommandPool;
+        cmdBufAllocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        cmdBufAllocateInfo.commandBufferCount = 1;
+
+        VkCommandBuffer cmdBuffer;
+        /*VK_CHECK_RESULT*/(vkAllocateCommandBuffers(vkDevice, &cmdBufAllocateInfo, &cmdBuffer));
+        VkCommandBufferBeginInfo cmdBufInfo {};
+        cmdBufInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        /*VK_CHECK_RESULT*/(vkBeginCommandBuffer(cmdBuffer, &cmdBufInfo));
+
+        executeFunction(cmdBuffer);
+
+        /*VK_CHECK_RESULT*/(vkEndCommandBuffer(cmdBuffer));
+
+        VkSubmitInfo submitInfo {};
+        submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        submitInfo.commandBufferCount = 1;
+        submitInfo.pCommandBuffers = &cmdBuffer;
+        // Create fence to ensure that the command buffer has finished executing
+        VkFenceCreateInfo fenceInfo {};
+        fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        fenceInfo.flags = 0;
+        VkFence fence;
+        /*VK_CHECK_RESULT*/(vkCreateFence(vkDevice, &fenceInfo, nullptr, &fence));
+        // Submit to the queue
+        vkQueueSubmit(vkGraphicsQueue, 1, &submitInfo, fence);
+        // Wait for the fence to signal that command buffer has finished executing
+        /*VK_CHECK_RESULT*/(vkWaitForFences(vkDevice, 1, &fence, VK_TRUE, UINT64_MAX));
+        vkDestroyFence(vkDevice, fence, nullptr);
+        vkFreeCommandBuffers(vkDevice, vkASCommandPool, 1, &cmdBuffer);
+    };
+
+
+
+
+
+
+
+
+
+
+    executeCommandBuffer([&](const VkCommandBuffer& cmdBuffer) {
+                VkAccelerationStructureInfoNV buildInfo{};
+                buildInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_INFO_NV;
+                buildInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_NV;
+                buildInfo.geometryCount = 1;
+                buildInfo.pGeometries = &geometry;
+
+                vkCmdBuildAccelerationStructureNV(
+                            cmdBuffer,
+                            &buildInfo,
+                            VK_NULL_HANDLE,
+                            0,
+                            VK_FALSE,
+                            bottomLevelAS.accelerationStructure,
+                            VK_NULL_HANDLE,
+                            m_scratch_buffer_handle,
+                            0);
+
+                VkMemoryBarrier memoryBarrier {};
+                memoryBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+                memoryBarrier.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_NV | VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_NV;
+                memoryBarrier.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_NV | VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_NV;
+                vkCmdPipelineBarrier(cmdBuffer, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_NV, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_NV, 0, 1, &memoryBarrier, 0, 0, 0, 0);
+
+                buildInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_NV;
+                buildInfo.pGeometries = 0;
+                buildInfo.geometryCount = 0;
+                buildInfo.instanceCount = 1;
+
+                vkCmdBuildAccelerationStructureNV(
+                            cmdBuffer,
+                            &buildInfo,
+                            m_instance_buffer_handle,
+                            0,
+                            VK_FALSE,
+                            topLevelAS.accelerationStructure,
+                            VK_NULL_HANDLE,
+                            m_scratch_buffer_handle,
+                            0);
+
+                vkCmdPipelineBarrier(cmdBuffer, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_NV, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_NV, 0, 1, &memoryBarrier, 0, 0, 0, 0);
+            });
+
+
+
+
+
+
+
+
+
+
+    VkImage m_storage_image;
+    VkImageView m_storage_image_view;
+
+    {
+        VkDeviceMemory m_colorImageMemory;
+
+        // Description of an image for resolve attachment.
+        VkImageCreateInfo vkColorImageInfo{};
+        vkColorImageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        vkColorImageInfo.imageType = VK_IMAGE_TYPE_2D;
+        vkColorImageInfo.extent.width = vkSelectedExtent.width;
+        vkColorImageInfo.extent.height = vkSelectedExtent.height;
+        vkColorImageInfo.extent.depth = 1;
+        vkColorImageInfo.mipLevels = 1;
+        vkColorImageInfo.arrayLayers = 1;
+        vkColorImageInfo.format = vkSelectedFormat.format;
+        vkColorImageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+        vkColorImageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        vkColorImageInfo.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
+        vkColorImageInfo.samples = VkSampleCountFlagBits::VK_SAMPLE_COUNT_1_BIT;
+        vkColorImageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+        // Create an image for resolve attachment.
+        if (vkCreateImage(vkDevice, &vkColorImageInfo, nullptr, &m_storage_image) != VK_SUCCESS) {
+            std::cerr << "Failed to create an image!" << std::endl;
+            abort();
+        }
+
+        // Get memory requirements.
+        VkMemoryRequirements vkMemRequirements;
+        vkGetImageMemoryRequirements(vkDevice, m_storage_image, &vkMemRequirements);
+
+        // Description of memory allocation.
+        VkMemoryAllocateInfo vkColorImageAllocInfo{};
+        vkColorImageAllocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        vkColorImageAllocInfo.allocationSize = vkMemRequirements.size;
+        // Find memory type.
+        VkPhysicalDeviceMemoryProperties vkBufferMemProperties;
+        vkGetPhysicalDeviceMemoryProperties(vkPhysicalDevice, &vkBufferMemProperties);
+
+        uint32_t colorImageMemoryTypeInex = UINT32_MAX;
+        for (uint32_t i = 0; i < vkBufferMemProperties.memoryTypeCount; i++) {
+            if ((vkMemRequirements.memoryTypeBits & (1 << i)) && (vkBufferMemProperties.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)) {
+                colorImageMemoryTypeInex = i;
+                break;
+            }
+        }
+        vkColorImageAllocInfo.memoryTypeIndex = colorImageMemoryTypeInex;
+
+        // Allocate memory for resolve attachment.
+        if (vkAllocateMemory(vkDevice, &vkColorImageAllocInfo, nullptr, &m_colorImageMemory) != VK_SUCCESS) {
+            std::cerr << "Failed to allocate image memory!" << std::endl;
+            abort();
+        }
+
+        // Bind the image to the memory.
+        vkBindImageMemory(vkDevice, m_storage_image, m_colorImageMemory, 0);
+
+        // Describe an image view for resolve attachment.
+        VkImageViewCreateInfo vkColorImageViewInfo{};
+        vkColorImageViewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        vkColorImageViewInfo.image = m_storage_image;
+        vkColorImageViewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        vkColorImageViewInfo.format = vkSelectedFormat.format;
+        vkColorImageViewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        vkColorImageViewInfo.subresourceRange.baseMipLevel = 0;
+        vkColorImageViewInfo.subresourceRange.levelCount = 1;
+        vkColorImageViewInfo.subresourceRange.baseArrayLayer = 0;
+        vkColorImageViewInfo.subresourceRange.layerCount = 1;
+
+        // Create an image view for resolve attachment.
+        if (vkCreateImageView(vkDevice, &vkColorImageViewInfo, nullptr, &m_storage_image_view) != VK_SUCCESS) {
+            std::cerr << "Failed to create texture image view!" << std::endl;
+            abort();
+        }
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+    auto setImageLayout = [=](
+                VkCommandBuffer cmdbuffer,
+                VkImage image,
+                VkImageLayout oldImageLayout,
+                VkImageLayout newImageLayout,
+                VkImageSubresourceRange subresourceRange,
+                VkPipelineStageFlags srcStageMask = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                VkPipelineStageFlags dstStageMask = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT)
+            {
+                // Create an image barrier object
+                VkImageMemoryBarrier imageMemoryBarrier {};
+                imageMemoryBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+                imageMemoryBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                imageMemoryBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                imageMemoryBarrier.oldLayout = oldImageLayout;
+                imageMemoryBarrier.newLayout = newImageLayout;
+                imageMemoryBarrier.image = image;
+                imageMemoryBarrier.subresourceRange = subresourceRange;
+
+                // Source layouts (old)
+                // Source access mask controls actions that have to be finished on the old layout
+                // before it will be transitioned to the new layout
+                switch (oldImageLayout)
+                {
+                case VK_IMAGE_LAYOUT_UNDEFINED:
+                    // Image layout is undefined (or does not matter)
+                    // Only valid as initial layout
+                    // No flags required, listed only for completeness
+                    imageMemoryBarrier.srcAccessMask = 0;
+                    break;
+
+                case VK_IMAGE_LAYOUT_PREINITIALIZED:
+                    // Image is preinitialized
+                    // Only valid as initial layout for linear images, preserves memory contents
+                    // Make sure host writes have been finished
+                    imageMemoryBarrier.srcAccessMask = VK_ACCESS_HOST_WRITE_BIT;
+                    break;
+
+                case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:
+                    // Image is a color attachment
+                    // Make sure any writes to the color buffer have been finished
+                    imageMemoryBarrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+                    break;
+
+                case VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL:
+                    // Image is a depth/stencil attachment
+                    // Make sure any writes to the depth/stencil buffer have been finished
+                    imageMemoryBarrier.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+                    break;
+
+                case VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:
+                    // Image is a transfer source
+                    // Make sure any reads from the image have been finished
+                    imageMemoryBarrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+                    break;
+
+                case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL:
+                    // Image is a transfer destination
+                    // Make sure any writes to the image have been finished
+                    imageMemoryBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+                    break;
+
+                case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL:
+                    // Image is read by a shader
+                    // Make sure any shader reads from the image have been finished
+                    imageMemoryBarrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+                    break;
+                default:
+                    // Other source layouts aren't handled (yet)
+                    break;
+                }
+
+                // Target layouts (new)
+                // Destination access mask controls the dependency for the new image layout
+                switch (newImageLayout)
+                {
+                case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL:
+                    // Image will be used as a transfer destination
+                    // Make sure any writes to the image have been finished
+                    imageMemoryBarrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+                    break;
+
+                case VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:
+                    // Image will be used as a transfer source
+                    // Make sure any reads from the image have been finished
+                    imageMemoryBarrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+                    break;
+
+                case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:
+                    // Image will be used as a color attachment
+                    // Make sure any writes to the color buffer have been finished
+                    imageMemoryBarrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+                    break;
+
+                case VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL:
+                    // Image layout will be used as a depth/stencil attachment
+                    // Make sure any writes to depth/stencil buffer have been finished
+                    imageMemoryBarrier.dstAccessMask = imageMemoryBarrier.dstAccessMask | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+                    break;
+
+                case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL:
+                    // Image will be read in a shader (sampler, input attachment)
+                    // Make sure any writes to the image have been finished
+                    if (imageMemoryBarrier.srcAccessMask == 0)
+                    {
+                        imageMemoryBarrier.srcAccessMask = VK_ACCESS_HOST_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
+                    }
+                    imageMemoryBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+                    break;
+                default:
+                    // Other source layouts aren't handled (yet)
+                    break;
+                }
+
+                // Put barrier inside setup command buffer
+                vkCmdPipelineBarrier(
+                    cmdbuffer,
+                    srcStageMask,
+                    dstStageMask,
+                    0,
+                    0, nullptr,
+                    0, nullptr,
+                    1, &imageMemoryBarrier);
+            };
+
+
+
+
+
+
+
+
+
+    executeCommandBuffer([&](const VkCommandBuffer& cmdBuffer) {
+                setImageLayout(cmdBuffer, m_storage_image,
+                                VK_IMAGE_LAYOUT_UNDEFINED,
+                                VK_IMAGE_LAYOUT_GENERAL,
+                                { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 });
+            });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    VkDescriptorSetLayout descriptorSetLayout;
+    VkPipelineLayout pipelineLayout;
+    VkPipeline pipeline;
+
+
+    {
+        VkDescriptorSetLayoutBinding accelerationStructureLayoutBinding{};
+        accelerationStructureLayoutBinding.binding = 0;
+        accelerationStructureLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_NV;
+        accelerationStructureLayoutBinding.descriptorCount = 1;
+        accelerationStructureLayoutBinding.stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_NV;
+
+        VkDescriptorSetLayoutBinding resultImageLayoutBinding{};
+        resultImageLayoutBinding.binding = 1;
+        resultImageLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        resultImageLayoutBinding.descriptorCount = 1;
+        resultImageLayoutBinding.stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_NV;
+
+        VkDescriptorSetLayoutBinding uniformBufferBinding{};
+        uniformBufferBinding.binding = 2;
+        uniformBufferBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        uniformBufferBinding.descriptorCount = 1;
+        uniformBufferBinding.stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_NV;
+
+        std::vector<VkDescriptorSetLayoutBinding> bindings({
+            accelerationStructureLayoutBinding,
+            resultImageLayoutBinding,
+            uniformBufferBinding
+            });
+
+        VkDescriptorSetLayoutCreateInfo layoutInfo{};
+        layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
+        layoutInfo.pBindings = bindings.data();
+        /*VK_CHECK_RESULT*/(vkCreateDescriptorSetLayout(vkDevice, &layoutInfo, nullptr, &descriptorSetLayout));
+
+        VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo{};
+        pipelineLayoutCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        pipelineLayoutCreateInfo.setLayoutCount = 1;
+        pipelineLayoutCreateInfo.pSetLayouts = &descriptorSetLayout;
+
+        /*VK_CHECK_RESULT*/(vkCreatePipelineLayout(vkDevice, &pipelineLayoutCreateInfo, nullptr, &pipelineLayout));
+
+        VkPipelineShaderStageCreateInfo vkRaygenShaderModuleCreateInfo{};
+        VkShaderModule vkRaygenShaderModule;
+        {
+            // Open file.
+            std::ifstream fragmentShaderFile("main2.rgen.spv", std::ios::ate | std::ios::binary);
+            if (!fragmentShaderFile.is_open()) {
+                std::cerr << "Raygen shader file not found!" << std::endl;
+                abort();
+            }
+            // Calculate file size.
+            size_t fragmentFileSize = static_cast< size_t >(fragmentShaderFile.tellg());
+            // Jump to the beginning of the file.
+            fragmentShaderFile.seekg(0);
+            // Read shader code.
+            std::vector< char > fragmentShaderBuffer(fragmentFileSize);
+            fragmentShaderFile.read(fragmentShaderBuffer.data(), fragmentFileSize);
+            // Close the file.
+            fragmentShaderFile.close();
+            // Shader module creation info.
+            VkShaderModuleCreateInfo vkFragmentShaderCreateInfo{};
+            vkFragmentShaderCreateInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+            vkFragmentShaderCreateInfo.codeSize = fragmentShaderBuffer.size();
+            vkFragmentShaderCreateInfo.pCode = reinterpret_cast< const uint32_t* >(fragmentShaderBuffer.data());
+            // Create a fragment shader module.
+            if (vkCreateShaderModule(vkDevice, &vkFragmentShaderCreateInfo, nullptr, &vkRaygenShaderModule) != VK_SUCCESS) {
+                std::cerr << "Failed to create a shader!" << std::endl;
+                abort();
+            }
+
+            // Create a pipeline stage for a vertex shader.
+            vkRaygenShaderModuleCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+            vkRaygenShaderModuleCreateInfo.stage = VK_SHADER_STAGE_RAYGEN_BIT_NV;
+            vkRaygenShaderModuleCreateInfo.module = vkRaygenShaderModule;
+            // main function name
+            vkRaygenShaderModuleCreateInfo.pName = "main";
+        }
+
+        VkPipelineShaderStageCreateInfo vkRaymissShaderModuleCreateInfo{};
+        VkShaderModule vkRaymissShaderModule;
+        {
+            // Open file.
+            std::ifstream fragmentShaderFile("main2.rmiss.spv", std::ios::ate | std::ios::binary);
+            if (!fragmentShaderFile.is_open()) {
+                std::cerr << "Raygen shader file not found!" << std::endl;
+                abort();
+            }
+            // Calculate file size.
+            size_t fragmentFileSize = static_cast< size_t >(fragmentShaderFile.tellg());
+            // Jump to the beginning of the file.
+            fragmentShaderFile.seekg(0);
+            // Read shader code.
+            std::vector< char > fragmentShaderBuffer(fragmentFileSize);
+            fragmentShaderFile.read(fragmentShaderBuffer.data(), fragmentFileSize);
+            // Close the file.
+            fragmentShaderFile.close();
+            // Shader module creation info.
+            VkShaderModuleCreateInfo vkFragmentShaderCreateInfo{};
+            vkFragmentShaderCreateInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+            vkFragmentShaderCreateInfo.codeSize = fragmentShaderBuffer.size();
+            vkFragmentShaderCreateInfo.pCode = reinterpret_cast< const uint32_t* >(fragmentShaderBuffer.data());
+            // Create a fragment shader module.
+            if (vkCreateShaderModule(vkDevice, &vkFragmentShaderCreateInfo, nullptr, &vkRaymissShaderModule) != VK_SUCCESS) {
+                std::cerr << "Failed to create a shader!" << std::endl;
+                abort();
+            }
+
+            // Create a pipeline stage for a vertex shader.
+            vkRaymissShaderModuleCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+            vkRaymissShaderModuleCreateInfo.stage = VK_SHADER_STAGE_MISS_BIT_NV;
+            vkRaymissShaderModuleCreateInfo.module = vkRaymissShaderModule;
+            // main function name
+            vkRaymissShaderModuleCreateInfo.pName = "main";
+        }
+
+        VkPipelineShaderStageCreateInfo vkRayhitShaderModuleCreateInfo{};
+        VkShaderModule vkRayhitShaderModule;
+        {
+            // Open file.
+            std::ifstream fragmentShaderFile("main2.rchit.spv", std::ios::ate | std::ios::binary);
+            if (!fragmentShaderFile.is_open()) {
+                std::cerr << "Raygen shader file not found!" << std::endl;
+                abort();
+            }
+            // Calculate file size.
+            size_t fragmentFileSize = static_cast< size_t >(fragmentShaderFile.tellg());
+            // Jump to the beginning of the file.
+            fragmentShaderFile.seekg(0);
+            // Read shader code.
+            std::vector< char > fragmentShaderBuffer(fragmentFileSize);
+            fragmentShaderFile.read(fragmentShaderBuffer.data(), fragmentFileSize);
+            // Close the file.
+            fragmentShaderFile.close();
+            // Shader module creation info.
+            VkShaderModuleCreateInfo vkFragmentShaderCreateInfo{};
+            vkFragmentShaderCreateInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+            vkFragmentShaderCreateInfo.codeSize = fragmentShaderBuffer.size();
+            vkFragmentShaderCreateInfo.pCode = reinterpret_cast< const uint32_t* >(fragmentShaderBuffer.data());
+            // Create a fragment shader module.
+            if (vkCreateShaderModule(vkDevice, &vkFragmentShaderCreateInfo, nullptr, &vkRayhitShaderModule) != VK_SUCCESS) {
+                std::cerr << "Failed to create a shader!" << std::endl;
+                abort();
+            }
+
+            // Create a pipeline stage for a vertex shader.
+            vkRayhitShaderModuleCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+            vkRayhitShaderModuleCreateInfo.stage = VK_SHADER_STAGE_CLOSEST_HIT_BIT_NV;
+            vkRayhitShaderModuleCreateInfo.module = vkRayhitShaderModule;
+            // main function name
+            vkRayhitShaderModuleCreateInfo.pName = "main";
+        }
+
+        std::array<VkPipelineShaderStageCreateInfo, 3> shaderStages {
+            vkRaygenShaderModuleCreateInfo,
+            vkRayhitShaderModuleCreateInfo,
+            vkRaymissShaderModuleCreateInfo,
+        };
+
+        /*
+            Setup ray tracing shader groups
+        */
+        // Indices for the different ray tracing shader types used in this example
+        #define INDEX_RAYGEN 0
+        #define INDEX_CLOSEST_HIT 1
+        #define INDEX_MISS 2
+
+        #define NUM_SHADER_GROUPS 3
+        std::array<VkRayTracingShaderGroupCreateInfoNV, NUM_SHADER_GROUPS> groups{};
+        for (auto& group : groups) {
+            // Init all groups with some default values
+            group.sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_NV;
+            group.generalShader = VK_SHADER_UNUSED_NV;
+            group.closestHitShader = VK_SHADER_UNUSED_NV;
+            group.anyHitShader = VK_SHADER_UNUSED_NV;
+            group.intersectionShader = VK_SHADER_UNUSED_NV;
+        }
+
+        // Links shaders and types to ray tracing shader groups
+        groups[INDEX_RAYGEN].type = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_NV;
+        groups[INDEX_RAYGEN].generalShader = INDEX_RAYGEN;
+        groups[INDEX_MISS].type = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_NV;
+        groups[INDEX_MISS].generalShader = INDEX_MISS;
+        groups[INDEX_CLOSEST_HIT].type = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_NV;
+        groups[INDEX_CLOSEST_HIT].generalShader = VK_SHADER_UNUSED_NV;
+        groups[INDEX_CLOSEST_HIT].closestHitShader = INDEX_CLOSEST_HIT;
+
+        VkRayTracingPipelineCreateInfoNV rayPipelineInfo{};
+        rayPipelineInfo.sType = VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_NV;
+        rayPipelineInfo.stageCount = static_cast<uint32_t>(shaderStages.size());
+        rayPipelineInfo.pStages = shaderStages.data();
+        rayPipelineInfo.groupCount = static_cast<uint32_t>(groups.size());
+        rayPipelineInfo.pGroups = groups.data();
+        rayPipelineInfo.maxRecursionDepth = 1;
+        rayPipelineInfo.layout = pipelineLayout;
+        /*VK_CHECK_RESULT*/(vkCreateRayTracingPipelinesNV(vkDevice, VK_NULL_HANDLE, 1, &rayPipelineInfo, nullptr, &pipeline));
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+    VkBuffer m_shader_binding_table_handle;
+
+    {
+        // Create buffer for the shader binding table
+        const uint32_t sbtSize = rayTracingProperties.shaderGroupBaseAlignment * NUM_SHADER_GROUPS;
+
+
+
+
+
+        {
+            VkBuffer m_handle;
+            VkDeviceMemory m_memory;
+            VkDeviceSize m_size;
+
+            // Describe a buffer.
+            VkBufferCreateInfo vkVertexBufferInfo{};
+            vkVertexBufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+            vkVertexBufferInfo.size = sbtSize;
+            vkVertexBufferInfo.usage = VK_BUFFER_USAGE_RAY_TRACING_BIT_NV;
+            vkVertexBufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+            // Create a buffer.
+            if (vkCreateBuffer(vkDevice, &vkVertexBufferInfo, nullptr, &m_shader_binding_table_handle) != VK_SUCCESS) {
+                std::cerr << "Failed to create a vertex buffer!" << std::endl;
+                abort();
+            }
+
+            // Retrieve memory requirements for the vertex buffer.
+            VkMemoryRequirements vkVertexBufferMemRequirements;
+            vkGetBufferMemoryRequirements(vkDevice, m_shader_binding_table_handle, &vkVertexBufferMemRequirements);
+
+            // Define memory allocate info.
+            VkMemoryAllocateInfo vkVertexBufferAllocInfo{};
+            vkVertexBufferAllocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+            vkVertexBufferAllocInfo.allocationSize = vkVertexBufferMemRequirements.size;
+            // Find a suitable memory type.
+
+
+
+            VkPhysicalDeviceMemoryProperties vkBufferMemProperties;
+            vkGetPhysicalDeviceMemoryProperties(vkPhysicalDevice, &vkBufferMemProperties);
+
+            uint32_t colorImageMemoryTypeInex = UINT32_MAX;
+            for (uint32_t i = 0; i < vkBufferMemProperties.memoryTypeCount; i++) {
+                if ((vkVertexBufferMemRequirements.memoryTypeBits & (1 << i)) && (vkBufferMemProperties.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)) {
+                    colorImageMemoryTypeInex = i;
+                    break;
+                }
+            }
+
+
+
+            vkVertexBufferAllocInfo.memoryTypeIndex = colorImageMemoryTypeInex;
+            // Allocate memory for the vertex buffer.
+            if (vkAllocateMemory(vkDevice, &vkVertexBufferAllocInfo, nullptr, &m_memory) != VK_SUCCESS) {
+                std::cerr << "Failed to allocate memroy for the vertex buffer!" << std::endl;
+                abort();
+            }
+
+            // Bind the buffer to the allocated memory.
+            vkBindBufferMemory(vkDevice, m_shader_binding_table_handle, m_memory, 0);
+
+
+
+
+            // Copy our vertices to the allocated memory.
+            void* vertexBufferMemoryData;
+            vkMapMemory(vkDevice, m_memory, 0, sbtSize, 0, &vertexBufferMemoryData);
+
+
+
+            auto* data = static_cast<uint8_t*>(vertexBufferMemoryData);
+
+            auto shaderHandleStorage = new uint8_t[sbtSize];
+            /*VK_CHECK_RESULT*/(vkGetRayTracingShaderGroupHandlesNV(vkDevice, pipeline, 0, NUM_SHADER_GROUPS, sbtSize, shaderHandleStorage));
+
+            for(uint32_t g = 0; g < NUM_SHADER_GROUPS; g++) {
+                memcpy(data, shaderHandleStorage + g * rayTracingProperties.shaderGroupHandleSize, rayTracingProperties.shaderGroupHandleSize);  // raygen
+                data += rayTracingProperties.shaderGroupBaseAlignment;
+            }
+
+
+
+            vkUnmapMemory(vkDevice, m_memory);
+        }
+
+
+
+}
+
+
     // ==========================================================================
     //                      STEP 31: Create uniform buffers
     // ==========================================================================
@@ -1550,24 +2069,22 @@ int main()
 
     // Structure that we want to provide to the vertext shader.
     struct UniformBufferObject {
-        glm::mat4 model;
-        glm::mat4 view;
-        glm::mat4 proj;
+        glm::mat4 viewInv;
+        glm::mat4 projInv;
     };
 
     // Get size of the uniform buffer.
     VkDeviceSize bufferSize = sizeof(UniformBufferObject);
 
     // Uniform buffers.
-    std::vector< VkBuffer > vkUniformBuffers;
-    vkUniformBuffers.resize(vkSwapChainImages.size());
+    VkBuffer vkUniformBuffer;
 
     // Memory of uniform buffers.
-    std::vector< VkDeviceMemory > vkUniformBuffersMemory;
-    vkUniformBuffersMemory.resize(vkSwapChainImages.size());
+    VkDeviceMemory vkUniformBuffersMemory;
 
-    // Create one uniform buffer per swap chain image.
-    for (size_t i = 0; i < vkSwapChainImages.size(); i++) {
+
+    {
+        // Create one uniform buffer per swap chain image.
         // Describe a buffer.
         VkBufferCreateInfo vkBufferInfo{};
         vkBufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -1576,14 +2093,14 @@ int main()
         vkBufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
         // Create a buffer.
-        if (vkCreateBuffer(vkDevice, &vkBufferInfo, nullptr, &vkUniformBuffers[i]) != VK_SUCCESS) {
+        if (vkCreateBuffer(vkDevice, &vkBufferInfo, nullptr, &vkUniformBuffer) != VK_SUCCESS) {
             std::cerr << "Failed to create a buffer!" << std::endl;
             abort();
         }
 
         // Retrieve memory requirements for the vertex buffer.
         VkMemoryRequirements vkMemRequirements;
-        vkGetBufferMemoryRequirements(vkDevice, vkUniformBuffers[i], &vkMemRequirements);
+        vkGetBufferMemoryRequirements(vkDevice, vkUniformBuffer, &vkMemRequirements);
 
         // Define memory allocate info.
         VkMemoryAllocateInfo vkAllocInfo{};
@@ -1603,172 +2120,373 @@ int main()
         vkAllocInfo.memoryTypeIndex = memTypeIndex;
 
         // Allocate memory for the vertex buffer.
-        if (vkAllocateMemory(vkDevice, &vkAllocInfo, nullptr, &vkUniformBuffersMemory[i]) != VK_SUCCESS) {
+        if (vkAllocateMemory(vkDevice, &vkAllocInfo, nullptr, &vkUniformBuffersMemory) != VK_SUCCESS) {
             std::cerr << "Failed to allocate buffer memory!" << std::endl;
             abort();
         }
 
         // Bind the buffer to the allocated memory.
-        vkBindBufferMemory(vkDevice, vkUniformBuffers[i], vkUniformBuffersMemory[i], 0);
+        vkBindBufferMemory(vkDevice, vkUniformBuffer, vkUniformBuffersMemory, 0);
     }
 
-    // ==========================================================================
-    //                  STEP 32: Create descriptopr sets
-    // ==========================================================================
-    // In order to use uniforms, we should create a descriptor set for each
-    // uniform buffer. Descriptors are allocated from the descriptor poll,
-    // so we should create it first.
-    // ==========================================================================
 
-    // Define a descriptor pool size. We need one descriptor set per swap chain image.
-    VkDescriptorPoolSize vkPoolSize{};
-    vkPoolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    vkPoolSize.descriptorCount = static_cast< uint32_t >(vkSwapChainImages.size());
 
-    // Define descriptor pool.
-    VkDescriptorPoolCreateInfo vkDescriptorPoolInfo{};
-    vkDescriptorPoolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    vkDescriptorPoolInfo.poolSizeCount = 1;
-    vkDescriptorPoolInfo.pPoolSizes = &vkPoolSize;
-    vkDescriptorPoolInfo.maxSets = static_cast< uint32_t >(vkSwapChainImages.size());
+    // Update uniform buffer object.
+    UniformBufferObject ubo{};
+    //ubo.model = glm::rotate(glm::mat4(1.0f), angle, glm::vec3(0.0f, 0.0f, 1.0f));
+    ubo.viewInv = glm::inverse(glm::lookAt(glm::vec3(2.0f, 2.0f, -2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f)));
+    float aspectRatio = static_cast< float >(vkSelectedExtent.width) / vkSelectedExtent.height;
+    ubo.projInv = glm::inverse(glm::perspective(glm::radians(45.0f), aspectRatio, 0.1f, 10.0f));
 
-    // Create descriptor pool.
-    VkDescriptorPool vkDescriptorPool;
-    if (vkCreateDescriptorPool(vkDevice, &vkDescriptorPoolInfo, nullptr, &vkDescriptorPool) != VK_SUCCESS) {
-        std::cerr << "Failed to create a descriptor pool!" << std::endl;
-        abort();
-    }
+    // Write the uniform buffer object.
+    void* data;
+    vkMapMemory(vkDevice, vkUniformBuffersMemory, 0, sizeof(ubo), 0, &data);
+    memcpy(data, &ubo, sizeof(ubo));
+    vkUnmapMemory(vkDevice, vkUniformBuffersMemory);
 
-    // Take a descriptor set layout created above and use it for all descriptor sets.
-    std::vector< VkDescriptorSetLayout > layouts(vkSwapChainImages.size(), vkDescriptorSetLayout);
 
-    // Describe allocate infor for descriptor set.
-    VkDescriptorSetAllocateInfo vkDescriptSetAllocInfo{};
-    vkDescriptSetAllocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    vkDescriptSetAllocInfo.descriptorPool = vkDescriptorPool;
-    vkDescriptSetAllocInfo.descriptorSetCount = static_cast< uint32_t >(vkSwapChainImages.size());
-    vkDescriptSetAllocInfo.pSetLayouts = layouts.data();
 
-    // Create a descriptor set.
-    std::vector< VkDescriptorSet > vkDescriptorSets;
-    vkDescriptorSets.resize(vkSwapChainImages.size());
-    if (vkAllocateDescriptorSets(vkDevice, &vkDescriptSetAllocInfo, vkDescriptorSets.data()) != VK_SUCCESS) {
-        std::cerr << "Failed to allocate descriptor set!" << std::endl;
-        abort();
-    }
 
-    // Write descriptors for each uniform buffer.
-    for (size_t i = 0; i < vkSwapChainImages.size(); i++) {
-        // Describe a uniform buffer info.
-        VkDescriptorBufferInfo vkBufferInfo{};
-        vkBufferInfo.buffer = vkUniformBuffers[i];
-        vkBufferInfo.offset = 0;
-        vkBufferInfo.range = sizeof(UniformBufferObject);
 
-        // Describe a descriptor set to write.
-        VkWriteDescriptorSet vkDescriptorWrite{};
-        vkDescriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        vkDescriptorWrite.dstSet = vkDescriptorSets[i];
-        vkDescriptorWrite.dstBinding = 0;
-        vkDescriptorWrite.dstArrayElement = 0;
-        vkDescriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        vkDescriptorWrite.descriptorCount = 1;
-        vkDescriptorWrite.pBufferInfo = &vkBufferInfo;
-        vkDescriptorWrite.pImageInfo = nullptr;
-        vkDescriptorWrite.pTexelBufferView = nullptr;
 
-        // Write the descriptor set.
-        vkUpdateDescriptorSets(vkDevice, 1, &vkDescriptorWrite, 0, nullptr);
-    }
 
-    // ==========================================================================
-    //                    STEP 33: Create command buffers
-    // ==========================================================================
-    // Command buffers describe a set of rendering commands submitted to Vulkan.
-    // We need to have one buffer per each image in the swap chain.
-    // Command buffers are taken from the command pool, so we should
-    // create one.
-    // ==========================================================================
 
-    // Describe a command pool.
-    VkCommandPoolCreateInfo vkPoolInfo{};
-    vkPoolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-    vkPoolInfo.queueFamilyIndex = queueFamilyIndices.graphicsFamily.value();
-    vkPoolInfo.flags = 0;
 
-    // Create a command pool.
-    VkCommandPool vkCommandPool;
-    if (vkCreateCommandPool(vkDevice, &vkPoolInfo, nullptr, &vkCommandPool) != VK_SUCCESS) {
-        std::cerr << "Failed to create a command pool!" << std::endl;
-        abort();
-    }
 
-    // Create a vector for all command buffers.
-    std::vector< VkCommandBuffer > vkCommandBuffers;
-    vkCommandBuffers.resize(vkSwapChainFramebuffers.size());
 
-    // Describe a command buffer allocate info.
-    VkCommandBufferAllocateInfo vkAllocInfo{};
-    vkAllocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    vkAllocInfo.commandPool = vkCommandPool;
-    vkAllocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    vkAllocInfo.commandBufferCount = static_cast< uint32_t >(vkCommandBuffers.size());
 
-    // Allocate command buffers.
-    if (vkAllocateCommandBuffers(vkDevice, &vkAllocInfo, vkCommandBuffers.data()) != VK_SUCCESS) {
-        std::cerr << "Failed to create command buffers" << std::endl;
-        abort();
-    }
 
-    // Describe a rendering sequence for each command buffer.
-    for (size_t i = 0; i < vkCommandBuffers.size(); i++) {
-        // Start adding commands into the buffer.
-        VkCommandBufferBeginInfo vkBeginInfo{};
-        vkBeginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-        vkBeginInfo.flags = 0;
-        vkBeginInfo.pInheritanceInfo = nullptr;
-        if (vkBeginCommandBuffer(vkCommandBuffers[i], &vkBeginInfo) != VK_SUCCESS) {
-            std::cerr << "Failed to start command buffer recording" << std::endl;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        VkDescriptorPool descriptorPool;
+        VkDescriptorSet descriptorSet;
+
+
+
+
+        {
+//            m_uniforms_rtx = std::make_shared< vka::uniforms >(this);
+//            m_uniforms_rtx->add_uniform< UniformBufferObject >("ubo", VK_SHADER_STAGE_VERTEX_BIT, 1);
+//            m_uniforms_rtx->create_descriptor_set_layout();
+            std::vector<VkDescriptorPoolSize> poolSizes = {
+                { VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_NV, 1 },
+                { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1 },
+                { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 }
+            };
+            VkDescriptorPoolCreateInfo descriptorPoolCreateInfo{};
+            descriptorPoolCreateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+            descriptorPoolCreateInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
+            descriptorPoolCreateInfo.pPoolSizes = poolSizes.data();
+            descriptorPoolCreateInfo.maxSets = 1;
+            /*VK_CHECK_RESULT*/(vkCreateDescriptorPool(vkDevice, &descriptorPoolCreateInfo, nullptr, &descriptorPool));
+
+            VkDescriptorSetAllocateInfo descriptorSetAllocateInfo {};
+            descriptorSetAllocateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+            descriptorSetAllocateInfo.descriptorPool = descriptorPool;
+            descriptorSetAllocateInfo.pSetLayouts = &descriptorSetLayout;
+            descriptorSetAllocateInfo.descriptorSetCount = 1;
+            /*VK_CHECK_RESULT*/(vkAllocateDescriptorSets(vkDevice, &descriptorSetAllocateInfo, &descriptorSet));
+
+            VkWriteDescriptorSetAccelerationStructureNV descriptorAccelerationStructureInfo{};
+            descriptorAccelerationStructureInfo.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_NV;
+            descriptorAccelerationStructureInfo.accelerationStructureCount = 1;
+            descriptorAccelerationStructureInfo.pAccelerationStructures = &topLevelAS.accelerationStructure;
+
+            VkWriteDescriptorSet accelerationStructureWrite{};
+            accelerationStructureWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            // The specialized acceleration structure descriptor has to be chained
+            accelerationStructureWrite.pNext = &descriptorAccelerationStructureInfo;
+            accelerationStructureWrite.dstSet = descriptorSet;
+            accelerationStructureWrite.dstBinding = 0;
+            accelerationStructureWrite.descriptorCount = 1;
+            accelerationStructureWrite.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_NV;
+
+            VkDescriptorImageInfo storageImageDescriptor{};
+            storageImageDescriptor.imageView = m_storage_image_view;
+            storageImageDescriptor.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+            VkWriteDescriptorSet resultImageWrite {};
+            resultImageWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            resultImageWrite.dstSet = descriptorSet;
+            resultImageWrite.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            resultImageWrite.dstBinding = 1;
+            resultImageWrite.pImageInfo = &storageImageDescriptor;
+            resultImageWrite.descriptorCount = 1;
+
+            VkDescriptorBufferInfo vkBufferInfo{};
+            vkBufferInfo.buffer = vkUniformBuffer;
+            vkBufferInfo.offset = 0;
+            vkBufferInfo.range = bufferSize;
+
+            VkWriteDescriptorSet uniformBufferWrite {};
+            uniformBufferWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            uniformBufferWrite.dstSet = descriptorSet;
+            uniformBufferWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            uniformBufferWrite.dstBinding = 2;
+            uniformBufferWrite.pBufferInfo = &vkBufferInfo;
+            uniformBufferWrite.descriptorCount = 1;
+
+            std::vector<VkWriteDescriptorSet> writeDescriptorSets = {
+                accelerationStructureWrite,
+                resultImageWrite,
+                uniformBufferWrite
+            };
+            vkUpdateDescriptorSets(vkDevice, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, VK_NULL_HANDLE);
+        }
+
+
+
+
+
+
+
+
+
+
+
+        //shaderBindingTable = std::make_shared< vka::buffer >(VK_BUFFER_USAGE_RAY_TRACING_BIT_NV, sbtSize, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
+
+
+
+//        shaderBindingTable->map([&](void* mappedData){
+//            auto* data = static_cast<uint8_t*>(mappedData);
+
+//            auto shaderHandleStorage = new uint8_t[sbtSize];
+//            VK_CHECK_RESULT(vkGetRayTracingShaderGroupHandlesNV(vkDevice, pipeline, 0, NUM_SHADER_GROUPS, sbtSize, shaderHandleStorage));
+
+//            for(uint32_t g = 0; g < NUM_SHADER_GROUPS; g++) {
+//                memcpy(data, shaderHandleStorage + g * rayTracingProperties.shaderGroupHandleSize, rayTracingProperties.shaderGroupHandleSize);  // raygen
+//                data += rayTracingProperties.shaderGroupBaseAlignment;
+//            }
+//        });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        // ==========================================================================
+        //                 STEP 26: Create swap chain image views
+        // ==========================================================================
+        // After the swap chain is created, it contains Vulkan images that are
+        // used to transfer rendered picture. In order to work with images
+        // we should create image views.
+        // ==========================================================================
+
+        // Fetch Vulkan images associated to the swap chain.
+        std::vector< VkImage > vkSwapChainImages;
+        uint32_t vkSwapChainImageCount;
+        vkGetSwapchainImagesKHR(vkDevice, vkSwapChain, &vkSwapChainImageCount, nullptr);
+        vkSwapChainImages.resize(vkSwapChainImageCount);
+        vkGetSwapchainImagesKHR(vkDevice, vkSwapChain, &vkSwapChainImageCount, vkSwapChainImages.data());
+
+        // Create image views for each image.
+        std::vector< VkImageView > vkSwapChainImageViews;
+        vkSwapChainImageViews.resize(vkSwapChainImageCount);
+        for (size_t i = 0; i < vkSwapChainImageCount; i++) {
+            // Image view create info.
+            VkImageViewCreateInfo createInfo{};
+            createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+            createInfo.image = vkSwapChainImages[i];
+            createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            createInfo.format = vkSelectedFormat.format;
+            createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+            createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+            createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+            createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+            createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            createInfo.subresourceRange.baseMipLevel = 0;
+            createInfo.subresourceRange.levelCount = 1;
+            createInfo.subresourceRange.baseArrayLayer = 0;
+            createInfo.subresourceRange.layerCount = 1;
+            // Create an image view.
+            if (vkCreateImageView(vkDevice, &createInfo, nullptr, &vkSwapChainImageViews[i]) != VK_SUCCESS) {
+                std::cerr << "Failed to create an image view #" << i << "!" << std::endl;
+                abort();
+            }
+        }
+
+
+
+
+
+
+
+        // ==========================================================================
+        //                    STEP 33: Create command buffers
+        // ==========================================================================
+        // Command buffers describe a set of rendering commands submitted to Vulkan.
+        // We need to have one buffer per each image in the swap chain.
+        // Command buffers are taken from the command pool, so we should
+        // create one.
+        // ==========================================================================
+
+        // Describe a command pool.
+        VkCommandPoolCreateInfo vkPoolInfo{};
+        vkPoolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+        vkPoolInfo.queueFamilyIndex = queueFamilyIndices.graphicsFamily.value();
+        vkPoolInfo.flags = 0;
+
+        // Create a command pool.
+        VkCommandPool vkCommandPool;
+        if (vkCreateCommandPool(vkDevice, &vkPoolInfo, nullptr, &vkCommandPool) != VK_SUCCESS) {
+            std::cerr << "Failed to create a command pool!" << std::endl;
             abort();
         }
 
-        // Define default values of color and depth buffer attachment elements.
-        // In our case this means a black color of the background and a maximal depth of each fragment.
-        std::array< VkClearValue, 2 > vkClearValues{};
-        vkClearValues[0].color = { 0.0f, 0.0f, 0.0f, 1.0f };
-        vkClearValues[1].depthStencil = { 1.0f, 0 };
+        // Create a vector for all command buffers.
+        std::vector< VkCommandBuffer > vkCommandBuffers;
+        vkCommandBuffers.resize(vkSwapChainImageViews.size());
 
-        // Describe a render pass.
-        VkRenderPassBeginInfo vkRenderPassBeginInfo{};
-        vkRenderPassBeginInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-        vkRenderPassBeginInfo.renderPass = vkRenderPass;
-        vkRenderPassBeginInfo.framebuffer = vkSwapChainFramebuffers[i];
-        vkRenderPassBeginInfo.renderArea.offset = { 0, 0 };
-        vkRenderPassBeginInfo.renderArea.extent = vkSelectedExtent;
-        vkRenderPassBeginInfo.clearValueCount = static_cast< uint32_t >(vkClearValues.size());
-        vkRenderPassBeginInfo.pClearValues = vkClearValues.data();
+        // Describe a command buffer allocate info.
+        VkCommandBufferAllocateInfo vkAllocInfo{};
+        vkAllocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        vkAllocInfo.commandPool = vkCommandPool;
+        vkAllocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        vkAllocInfo.commandBufferCount = static_cast< uint32_t >(vkCommandBuffers.size());
 
-        // Start render pass.
-        vkCmdBeginRenderPass(vkCommandBuffers[i], &vkRenderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
-        // Bind a pipeline we defined above.
-        vkCmdBindPipeline(vkCommandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, vkGraphicsPipeline);
-        // Bind vertices.
-        VkBuffer vertexBuffers[] = { vkVertexBuffer };
-        VkDeviceSize offsets[] = { 0 };
-        vkCmdBindVertexBuffers(vkCommandBuffers[i], 0, 1, vertexBuffers, offsets);
-        // Bind descriptor sets for uniforms.
-        vkCmdBindDescriptorSets(vkCommandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipelineLayout, 0, 1, &vkDescriptorSets[i], 0, nullptr);
-        // Draw command.
-        vkCmdDraw(vkCommandBuffers[i], static_cast< uint32_t >(vertices.size()), 1, 0, 0);
-        // Finish render pass.
-        vkCmdEndRenderPass(vkCommandBuffers[i]);
-
-        // Fihish adding commands into the buffer.
-        if (vkEndCommandBuffer(vkCommandBuffers[i]) != VK_SUCCESS) {
-            std::cerr << "Failed to finish command buffer recording" << std::endl;
+        // Allocate command buffers.
+        if (vkAllocateCommandBuffers(vkDevice, &vkAllocInfo, vkCommandBuffers.data()) != VK_SUCCESS) {
+            std::cerr << "Failed to create command buffers" << std::endl;
             abort();
         }
-    }
+
+
+        VkImageSubresourceRange subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+
+        // Describe a rendering sequence for each command buffer.
+            for (size_t i = 0; i < vkCommandBuffers.size(); i++) {
+                // Start adding commands into the buffer.
+                VkCommandBufferBeginInfo vkBeginInfo{};
+                vkBeginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+                vkBeginInfo.flags = 0;
+                vkBeginInfo.pInheritanceInfo = nullptr;
+                if (vkBeginCommandBuffer(vkCommandBuffers[i], &vkBeginInfo) != VK_SUCCESS) {
+                    std::cerr << "Failed to start command buffer recording" << std::endl;
+                    abort();
+                }
+
+
+                /*
+                    Dispatch the ray tracing commands
+                */
+                vkCmdBindPipeline(vkCommandBuffers[i], VK_PIPELINE_BIND_POINT_RAY_TRACING_NV, pipeline);
+                vkCmdBindDescriptorSets(vkCommandBuffers[i], VK_PIPELINE_BIND_POINT_RAY_TRACING_NV, pipelineLayout, 0, 1, &descriptorSet, 0, 0);
+
+                // Calculate shader binding offsets, which is pretty straight forward in our example
+                VkDeviceSize bindingOffsetRayGenShader = rayTracingProperties.shaderGroupBaseAlignment * INDEX_RAYGEN;
+                VkDeviceSize bindingOffsetMissShader = rayTracingProperties.shaderGroupBaseAlignment * INDEX_MISS;
+                VkDeviceSize bindingOffsetHitShader = rayTracingProperties.shaderGroupBaseAlignment * INDEX_CLOSEST_HIT;
+                VkDeviceSize bindingStride = rayTracingProperties.shaderGroupBaseAlignment; // TODO: or shaderGroupBaseAlignment
+
+                vkCmdTraceRaysNV(vkCommandBuffers[i],
+                    m_shader_binding_table_handle, bindingOffsetRayGenShader,
+                    m_shader_binding_table_handle, bindingOffsetMissShader, bindingStride,
+                    m_shader_binding_table_handle, bindingOffsetHitShader, bindingStride,
+                    VK_NULL_HANDLE, 0, 0,
+                    vkSelectedExtent.width, vkSelectedExtent.height, 1);
+
+                /*
+                    Copy raytracing output to swap chain image
+                */
+
+                // Prepare current swapchain image as transfer destination
+                setImageLayout(
+                    vkCommandBuffers[i],
+                    vkSwapChainImages[i],
+                    VK_IMAGE_LAYOUT_UNDEFINED,
+                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                    subresourceRange);
+
+                // Prepare ray tracing output image as transfer source
+                setImageLayout(
+                    vkCommandBuffers[i],
+                    m_storage_image,
+                    VK_IMAGE_LAYOUT_GENERAL,
+                    VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                    subresourceRange);
+
+                VkImageCopy copyRegion{};
+                copyRegion.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+                copyRegion.srcOffset = { 0, 0, 0 };
+                copyRegion.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+                copyRegion.dstOffset = { 0, 0, 0 };
+                copyRegion.extent = { vkSelectedExtent.width, vkSelectedExtent.height, 1 };
+                vkCmdCopyImage(vkCommandBuffers[i], m_storage_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, vkSwapChainImages[i], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
+
+                // Transition swap chain image back for presentation
+                setImageLayout(
+                    vkCommandBuffers[i],
+                    vkSwapChainImages[i],
+                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                    VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                    subresourceRange);
+
+                // Transition ray tracing output image back to general layout
+                setImageLayout(
+                    vkCommandBuffers[i],
+                    m_storage_image,
+                    VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                    VK_IMAGE_LAYOUT_GENERAL,
+                    subresourceRange);
+
+
+                // Fihish adding commands into the buffer.
+                if (vkEndCommandBuffer(vkCommandBuffers[i]) != VK_SUCCESS) {
+                    std::cerr << "Failed to finish command buffer recording" << std::endl;
+                    abort();
+                }
+            }
+
+
+
+
+
+
+
 
     // ==========================================================================
     //                   STEP 34: Synchronization primitives
@@ -1839,9 +2557,6 @@ int main()
     // we need to pick their handles explicitly.
     // ==========================================================================
 
-    // Pick a graphics queue.
-    VkQueue vkGraphicsQueue;
-    vkGetDeviceQueue(vkDevice, queueFamilyIndices.graphicsFamily.value(), 0, &vkGraphicsQueue);
 
     // Pick a present queue.
     // It might happen that both handles refer to the same queue.
@@ -1877,19 +2592,6 @@ int main()
         auto currentTime = std::chrono::high_resolution_clock::now();
         float time = std::chrono::duration< float, std::chrono::seconds::period >(currentTime - startTime).count();
         float angle = time * glm::radians(90.0f);
-
-        // Update uniform buffer object.
-        UniformBufferObject ubo{};
-        ubo.model = glm::rotate(glm::mat4(1.0f), angle, glm::vec3(0.0f, 0.0f, 1.0f));
-        ubo.view = glm::lookAt(glm::vec3(2.0f, 2.0f, -2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-        float aspectRatio = static_cast< float >(vkSelectedExtent.width) / vkSelectedExtent.height;
-        ubo.proj = glm::perspective(glm::radians(45.0f), aspectRatio, 0.1f, 10.0f);
-
-        // Write the uniform buffer object.
-        void* data;
-        vkMapMemory(vkDevice, vkUniformBuffersMemory[imageIndex], 0, sizeof(ubo), 0, &data);
-        memcpy(data, &ubo, sizeof(ubo));
-        vkUnmapMemory(vkDevice, vkUniformBuffersMemory[imageIndex]);
 
         // If the image is locked - wait for it.
         if (vkImagesInFlight[imageIndex] != VK_NULL_HANDLE) {
@@ -1966,14 +2668,9 @@ int main()
         vkDestroySemaphore(vkDevice, vkImageAvailableSemaphores[i], nullptr);
     }
 
-    // Destroy swap uniform buffers.
-    for (size_t i = 0; i < vkSwapChainImages.size(); i++) {
-        vkDestroyBuffer(vkDevice, vkUniformBuffers[i], nullptr);
-        vkFreeMemory(vkDevice, vkUniformBuffersMemory[i], nullptr);
-    }
-
-    // Destory descriptor pool for uniforms.
-    vkDestroyDescriptorPool(vkDevice, vkDescriptorPool, nullptr);
+    // Destroy uniform buffer.
+    vkDestroyBuffer(vkDevice, vkUniformBuffer, nullptr);
+    vkFreeMemory(vkDevice, vkUniformBuffersMemory, nullptr);
 
     // Destroy vertex buffer.
     vkDestroyBuffer(vkDevice, vkVertexBuffer, nullptr);
@@ -1982,24 +2679,6 @@ int main()
     // Destory command pool
     vkDestroyCommandPool(vkDevice, vkCommandPool, nullptr);
 
-    // Destory framebuffers.
-    for (auto framebuffer : vkSwapChainFramebuffers) {
-        vkDestroyFramebuffer(vkDevice, framebuffer, nullptr);
-    }
-
-    vkDestroyImageView(vkDevice, colorImageView, nullptr);
-    vkDestroyImage(vkDevice, colorImage, nullptr);
-    vkFreeMemory(vkDevice, colorImageMemory, nullptr);
-
-    // Destroy depth-stensil image and image view.
-    vkDestroyImageView(vkDevice, vkDepthImageView, nullptr);
-    vkDestroyImage(vkDevice, vkDepthImage, nullptr);
-    vkFreeMemory(vkDevice, vkDepthImageMemory, nullptr);
-
-    // Destory pipeline.
-    vkDestroyPipeline(vkDevice, vkGraphicsPipeline, nullptr);
-    vkDestroyPipelineLayout(vkDevice, vkPipelineLayout, nullptr);
-    vkDestroyRenderPass(vkDevice, vkRenderPass, nullptr);
 
     // Destroy shader modules.
     vkDestroyShaderModule(vkDevice, vkFragmentShaderModule, nullptr);
