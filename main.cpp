@@ -535,6 +535,18 @@ int main()
         abort();
     }
 
+    // Request physical device memory properties that will be used to find a suitable memory type.
+    VkPhysicalDeviceMemoryProperties vkPhysicalDeviceMemoryProperties;
+    vkGetPhysicalDeviceMemoryProperties(vkPhysicalDevice, &vkPhysicalDeviceMemoryProperties);
+
+    // Query the ray tracing properties of the current implementation, we will need them later on.
+    VkPhysicalDeviceRayTracingPropertiesNV rayTracingProperties{};
+    rayTracingProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PROPERTIES_NV;
+    VkPhysicalDeviceProperties2 deviceProps2{};
+    deviceProps2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+    deviceProps2.pNext = &rayTracingProperties;
+    vkGetPhysicalDeviceProperties2(vkPhysicalDevice, &deviceProps2);
+
     // ==========================================================================
     //                   STEP 9: Create a logical device
     // ==========================================================================
@@ -727,186 +739,57 @@ int main()
     }
 
     // ==========================================================================
-    //               STEP 12: Create a descriptor set layout
+    //                 STEP 12: Create swap chain image views
     // ==========================================================================
-    // Descriptor set layout describes details of every uniform data binding
-    // using in shaders. This is needed if we want to use uniforms in shaders.
-    // ==========================================================================
-
-    VkDescriptorSetLayoutBinding vkUboLayoutBinding{};
-    vkUboLayoutBinding.binding = 0;
-    vkUboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    vkUboLayoutBinding.descriptorCount = 1;
-    vkUboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-    vkUboLayoutBinding.pImmutableSamplers = nullptr;
-
-    VkDescriptorSetLayout vkDescriptorSetLayout;
-
-    VkDescriptorSetLayoutCreateInfo vkLayoutInfo{};
-    vkLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    vkLayoutInfo.bindingCount = 1;
-    vkLayoutInfo.pBindings = &vkUboLayoutBinding;
-
-    if (vkCreateDescriptorSetLayout(vkDevice, &vkLayoutInfo, nullptr, &vkDescriptorSetLayout) != VK_SUCCESS) {
-        std::cerr << "Failed to create a descriptor set layout" << std::endl;
-        abort();
-    }
-
-    // ==========================================================================
-    //                        STEP 13: Load shaders
-    // ==========================================================================
-    // Shaders are special code that is executed directly on GPU.
-    // For our simple example we use vertex and fragment shaders.
-    // Unlike OpenGL, Vulcan uses a binary format which is called SPIR-V and
-    // each shader should be compiled to this format using glslc compiler that
-    // could be found in Vulkan SDK.
+    // After the swap chain is created, it contains Vulkan images that are
+    // used to transfer rendered picture. In order to work with images
+    // we should create image views.
     // ==========================================================================
 
-    // --------------------------------------------------------------------------
-    // Create a vertex shader module.
-    // --------------------------------------------------------------------------
+    // Fetch Vulkan images associated to the swap chain.
+    std::vector< VkImage > vkSwapChainImages;
+    uint32_t vkSwapChainImageCount;
+    vkGetSwapchainImagesKHR(vkDevice, vkSwapChain, &vkSwapChainImageCount, nullptr);
+    vkSwapChainImages.resize(vkSwapChainImageCount);
+    vkGetSwapchainImagesKHR(vkDevice, vkSwapChain, &vkSwapChainImageCount, vkSwapChainImages.data());
 
-    // Open file.
-    std::ifstream vertexShaderFile("main.vert.spv", std::ios::ate | std::ios::binary);
-    if (!vertexShaderFile.is_open()) {
-        std::cerr << "Vertex shader file not found!" << std::endl;
-        abort();
+    // Create image views for each image.
+    std::vector< VkImageView > vkSwapChainImageViews;
+    vkSwapChainImageViews.resize(vkSwapChainImageCount);
+    for (size_t i = 0; i < vkSwapChainImageCount; i++) {
+        // Image view create info.
+        VkImageViewCreateInfo createInfo{};
+        createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        createInfo.image = vkSwapChainImages[i];
+        createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        createInfo.format = vkSelectedFormat.format;
+        createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+        createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+        createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+        createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+        createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        createInfo.subresourceRange.baseMipLevel = 0;
+        createInfo.subresourceRange.levelCount = 1;
+        createInfo.subresourceRange.baseArrayLayer = 0;
+        createInfo.subresourceRange.layerCount = 1;
+        // Create an image view.
+        if (vkCreateImageView(vkDevice, &createInfo, nullptr, &vkSwapChainImageViews[i]) != VK_SUCCESS) {
+            std::cerr << "Failed to create an image view #" << i << "!" << std::endl;
+            abort();
+        }
     }
-    // Calculate file size.
-    size_t vertexFileSize = static_cast< size_t >(vertexShaderFile.tellg());
-    // Jump to the beginning of the file.
-    vertexShaderFile.seekg(0);
-    // Read shader code.
-    std::vector< char > vertexShaderBuffer(vertexFileSize);
-    vertexShaderFile.read(vertexShaderBuffer.data(), vertexFileSize);
-    // Close the file.
-    vertexShaderFile.close();
-    // Shader module creation info.
-    VkShaderModuleCreateInfo vkVertexShaderCreateInfo{};
-    vkVertexShaderCreateInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-    vkVertexShaderCreateInfo.codeSize = vertexShaderBuffer.size();
-    vkVertexShaderCreateInfo.pCode = reinterpret_cast< const uint32_t* >(vertexShaderBuffer.data());
-    // Create a vertex shader module.
-    VkShaderModule vkVertexShaderModule;
-    if (vkCreateShaderModule(vkDevice, &vkVertexShaderCreateInfo, nullptr, &vkVertexShaderModule) != VK_SUCCESS) {
-        std::cerr << "Failed to create a shader!" << std::endl;
-        abort();
-    }
-
-    // --------------------------------------------------------------------------
-    // Create a fragment shader module.
-    // --------------------------------------------------------------------------
-
-    // Open file.
-    std::ifstream fragmentShaderFile("main.frag.spv", std::ios::ate | std::ios::binary);
-    if (!fragmentShaderFile.is_open()) {
-        std::cerr << "Fragment shader file not found!" << std::endl;
-        abort();
-    }
-    // Calculate file size.
-    size_t fragmentFileSize = static_cast< size_t >(fragmentShaderFile.tellg());
-    // Jump to the beginning of the file.
-    fragmentShaderFile.seekg(0);
-    // Read shader code.
-    std::vector< char > fragmentShaderBuffer(fragmentFileSize);
-    fragmentShaderFile.read(fragmentShaderBuffer.data(), fragmentFileSize);
-    // Close the file.
-    fragmentShaderFile.close();
-    // Shader module creation info.
-    VkShaderModuleCreateInfo vkFragmentShaderCreateInfo{};
-    vkFragmentShaderCreateInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-    vkFragmentShaderCreateInfo.codeSize = fragmentShaderBuffer.size();
-    vkFragmentShaderCreateInfo.pCode = reinterpret_cast< const uint32_t* >(fragmentShaderBuffer.data());
-    // Create a fragment shader module.
-    VkShaderModule vkFragmentShaderModule;
-    if (vkCreateShaderModule(vkDevice, &vkFragmentShaderCreateInfo, nullptr, &vkFragmentShaderModule) != VK_SUCCESS) {
-        std::cerr << "Failed to create a shader!" << std::endl;
-        abort();
-    }
-
-    // --------------------------------------------------------------------------
-
-    // Create a pipeline stage for a vertex shader.
-    VkPipelineShaderStageCreateInfo vkVertShaderStageInfo{};
-    vkVertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    vkVertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
-    vkVertShaderStageInfo.module = vkVertexShaderModule;
-    // main function name
-    vkVertShaderStageInfo.pName = "main";
-
-    // Create a pipeline stage for a fragment shader.
-    VkPipelineShaderStageCreateInfo vkFragShaderStageInfo{};
-    vkFragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    vkFragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-    vkFragShaderStageInfo.module = vkFragmentShaderModule;
-    // main function name
-    vkFragShaderStageInfo.pName = "main";
-
-    // Put both shader modules into an array.
-    std::array< VkPipelineShaderStageCreateInfo, 2 > shaderStages {
-        vkVertShaderStageInfo,
-        vkFragShaderStageInfo
-    };
 
     // ==========================================================================
     //                    STEP 14: Create a vertex buffer
     // ==========================================================================
-    // Vertex buffers provide vertices to shaders.
-    // In our case this is a geometry of a cube.
-    // ==========================================================================
-
-    // Structure that represents a vertex of a cube.
-    struct Vertex
-    {
-        // 3D coordinates of the vertex.
-        glm::vec3 pos;
-        // Color of the vertex.
-        glm::vec3 color;
-    };
-
-    // Binding descriptor specifies how our array is splited into vertices.
-    // In particular, we say that each sizeof(Vertex) bytes correspond to one vertex.
-    VkVertexInputBindingDescription vkBindingDescription{};
-    vkBindingDescription.binding = 0;
-    vkBindingDescription.stride = sizeof(Vertex);
-    vkBindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-
-    // Attribute description specifies how one vertext is split into separate variables.
-    // In our case a vertext is a composition of two vec3 values: coordinates and color.
-    // Property location corresponds to a location value in shader code.
-    std::array< VkVertexInputAttributeDescription, 2 > vkAttributeDescriptions{};
-    // Description of the first attribute (coordinates).
-    vkAttributeDescriptions[0].binding = 0;
-    vkAttributeDescriptions[0].location = 0;
-    vkAttributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
-    vkAttributeDescriptions[0].offset = offsetof(Vertex, pos);
-    // Description of the second attribute (color).
-    vkAttributeDescriptions[1].binding = 0;
-    vkAttributeDescriptions[1].location = 1;
-    vkAttributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
-    vkAttributeDescriptions[1].offset = offsetof(Vertex, color);
-
-    // Create a vertex input state for pipeline creation.
-    VkPipelineVertexInputStateCreateInfo vkVertexInputInfo{};
-    vkVertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    vkVertexInputInfo.vertexBindingDescriptionCount = 1;
-    vkVertexInputInfo.pVertexBindingDescriptions = &vkBindingDescription;
-    vkVertexInputInfo.vertexAttributeDescriptionCount = static_cast< uint32_t >(vkAttributeDescriptions.size());
-    vkVertexInputInfo.pVertexAttributeDescriptions = vkAttributeDescriptions.data();
-
-
-    // ==========================================================================
-    //                    STEP 30: Create a vertex buffer
-    // ==========================================================================
-    // Vertex buffer contains vertices of our model we want to pass
-    // to the vertex shader.
+    // Vertex buffer contains vertices of our model and will be used to construct
+    // acceleration structures for ray tracing.
     // ==========================================================================
 
     // Create a cube specifying its vertices.
     // Each triplet of vertices represent one triangle.
     // We do not use index buffer, so some vertices are duplicated.
-    // Each plane has its own color.
-    /*std::vector< glm::vec3 > vertices
+    std::vector< glm::vec3 > vertices
     {
         { -0.5f, -0.5f, -0.5f },
         { -0.5f,  0.5f, -0.5f },
@@ -949,17 +832,7 @@ int main()
         { -0.5f, -0.5f,  0.5f },
         {  0.5f, -0.5f, -0.5f },
         {  0.5f, -0.5f,  0.5f },
-    };*/
-
-    std::vector<Vertex> vertices = {
-                        { {  1.0f,  1.0f, 0.0f } },
-                        { { -1.0f,  1.0f, 0.0f } },
-                        { {  0.0f, -1.0f, 0.0f } },
-
-                        { { -1.0f,  1.0f, 0.0f } },
-                        { {  1.0f,  1.0f, 0.0f } },
-                        { {  0.0f, -1.0f, 0.0f } },
-                    };
+    };
 
     // Calculate buffer size.
     VkDeviceSize vertexBufferSize = sizeof(vertices[0]) * vertices.size();
@@ -986,23 +859,23 @@ int main()
     VkMemoryAllocateInfo vkVertexBufferAllocInfo{};
     vkVertexBufferAllocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     vkVertexBufferAllocInfo.allocationSize = vkVertexBufferMemRequirements.size;
+
     // Find a suitable memory type.
-    uint32_t bufferMemTypeIndex = UINT32_MAX;
-    VkMemoryPropertyFlags vkBufferMemFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-    VkPhysicalDeviceMemoryProperties vkBufferMemProperties;
-    vkGetPhysicalDeviceMemoryProperties(vkPhysicalDevice, &vkBufferMemProperties);
-    for (uint32_t i = 0; i < vkBufferMemProperties.memoryTypeCount; i++) {
+    uint32_t vkVertexBufferMemTypeIndex = UINT32_MAX;
+    VkMemoryPropertyFlags vkVertexBufferMemFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    for (uint32_t i = 0; i < vkPhysicalDeviceMemoryProperties.memoryTypeCount; i++) {
         if ((vkVertexBufferMemRequirements.memoryTypeBits & (1 << i)) &&
-                (vkBufferMemProperties.memoryTypes[i].propertyFlags & vkBufferMemFlags) == vkBufferMemFlags) {
-            bufferMemTypeIndex = i;
+                (vkPhysicalDeviceMemoryProperties.memoryTypes[i].propertyFlags & vkVertexBufferMemFlags) == vkVertexBufferMemFlags) {
+            vkVertexBufferMemTypeIndex = i;
             break;
         }
     }
-    vkVertexBufferAllocInfo.memoryTypeIndex = bufferMemTypeIndex;
+    vkVertexBufferAllocInfo.memoryTypeIndex = vkVertexBufferMemTypeIndex;
+
     // Allocate memory for the vertex buffer.
     VkDeviceMemory vkVertexBufferMemory;
     if (vkAllocateMemory(vkDevice, &vkVertexBufferAllocInfo, nullptr, &vkVertexBufferMemory) != VK_SUCCESS) {
-        std::cerr << "Failed to allocate memroy for the vertex buffer!" << std::endl;
+        std::cerr << "Failed to allocate memory for the vertex buffer!" << std::endl;
         abort();
     }
 
@@ -1015,66 +888,37 @@ int main()
     memcpy(vertexBufferMemoryData, vertices.data(), (size_t) vertexBufferSize);
     vkUnmapMemory(vkDevice, vkVertexBufferMemory);
 
+    // ==========================================================================
+    //                    STEP 15: Import extension function
+    // ==========================================================================
+    // Function that belong to extensions are not available in the vulkan header
+    // because the corresponding extension might be not enabled or not available
+    // in the particular device. Instead we can retrieve a pointer to the
+    // extension function via vkGetDeviceProcAddr() call.
+    // For ray tracing we would need a couple of them.
+    // ==========================================================================
 
+    PFN_vkCreateAccelerationStructureNV vkCreateAccelerationStructureNV = reinterpret_cast<PFN_vkCreateAccelerationStructureNV>(vkGetDeviceProcAddr(vkDevice, "vkCreateAccelerationStructureNV"));
+    PFN_vkDestroyAccelerationStructureNV vkDestroyAccelerationStructureNV = reinterpret_cast<PFN_vkDestroyAccelerationStructureNV>(vkGetDeviceProcAddr(vkDevice, "vkDestroyAccelerationStructureNV"));
+    PFN_vkBindAccelerationStructureMemoryNV vkBindAccelerationStructureMemoryNV = reinterpret_cast<PFN_vkBindAccelerationStructureMemoryNV>(vkGetDeviceProcAddr(vkDevice, "vkBindAccelerationStructureMemoryNV"));
+    PFN_vkGetAccelerationStructureHandleNV vkGetAccelerationStructureHandleNV = reinterpret_cast<PFN_vkGetAccelerationStructureHandleNV>(vkGetDeviceProcAddr(vkDevice, "vkGetAccelerationStructureHandleNV"));
+    PFN_vkGetAccelerationStructureMemoryRequirementsNV vkGetAccelerationStructureMemoryRequirementsNV = reinterpret_cast<PFN_vkGetAccelerationStructureMemoryRequirementsNV>(vkGetDeviceProcAddr(vkDevice, "vkGetAccelerationStructureMemoryRequirementsNV"));
+    PFN_vkCmdBuildAccelerationStructureNV vkCmdBuildAccelerationStructureNV = reinterpret_cast<PFN_vkCmdBuildAccelerationStructureNV>(vkGetDeviceProcAddr(vkDevice, "vkCmdBuildAccelerationStructureNV"));
+    PFN_vkCreateRayTracingPipelinesNV vkCreateRayTracingPipelinesNV = reinterpret_cast<PFN_vkCreateRayTracingPipelinesNV>(vkGetDeviceProcAddr(vkDevice, "vkCreateRayTracingPipelinesNV"));
+    PFN_vkGetRayTracingShaderGroupHandlesNV vkGetRayTracingShaderGroupHandlesNV = reinterpret_cast<PFN_vkGetRayTracingShaderGroupHandlesNV>(vkGetDeviceProcAddr(vkDevice, "vkGetRayTracingShaderGroupHandlesNV"));
+    PFN_vkCmdTraceRaysNV vkCmdTraceRaysNV = reinterpret_cast<PFN_vkCmdTraceRaysNV>(vkGetDeviceProcAddr(vkDevice, "vkCmdTraceRaysNV"));
 
+    // ==========================================================================
+    //                    STEP 16: Create a BLAS
+    // ==========================================================================
+    // Bottom level acceleration structure describes geometry of an object
+    // regardles to its position in the world space.
+    // So each unique type of objects is described by its own BLAS.
+    // ==========================================================================
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    PFN_vkCreateAccelerationStructureNV vkCreateAccelerationStructureNV;
-    PFN_vkDestroyAccelerationStructureNV vkDestroyAccelerationStructureNV;
-    PFN_vkBindAccelerationStructureMemoryNV vkBindAccelerationStructureMemoryNV;
-    PFN_vkGetAccelerationStructureHandleNV vkGetAccelerationStructureHandleNV;
-    PFN_vkGetAccelerationStructureMemoryRequirementsNV vkGetAccelerationStructureMemoryRequirementsNV;
-    PFN_vkCmdBuildAccelerationStructureNV vkCmdBuildAccelerationStructureNV;
-    PFN_vkCreateRayTracingPipelinesNV vkCreateRayTracingPipelinesNV;
-    PFN_vkGetRayTracingShaderGroupHandlesNV vkGetRayTracingShaderGroupHandlesNV;
-    PFN_vkCmdTraceRaysNV vkCmdTraceRaysNV;
-
-
-    // Ray tracing acceleration structure
-    struct AccelerationStructure {
-        VkDeviceMemory memory;
-        VkAccelerationStructureNV accelerationStructure;
-        uint64_t handle;
-    };
-
-    AccelerationStructure bottomLevelAS;
-    AccelerationStructure topLevelAS;
-
-
-
-    vkCreateAccelerationStructureNV = reinterpret_cast<PFN_vkCreateAccelerationStructureNV>(vkGetDeviceProcAddr(vkDevice, "vkCreateAccelerationStructureNV"));
-    vkDestroyAccelerationStructureNV = reinterpret_cast<PFN_vkDestroyAccelerationStructureNV>(vkGetDeviceProcAddr(vkDevice, "vkDestroyAccelerationStructureNV"));
-    vkBindAccelerationStructureMemoryNV = reinterpret_cast<PFN_vkBindAccelerationStructureMemoryNV>(vkGetDeviceProcAddr(vkDevice, "vkBindAccelerationStructureMemoryNV"));
-    vkGetAccelerationStructureHandleNV = reinterpret_cast<PFN_vkGetAccelerationStructureHandleNV>(vkGetDeviceProcAddr(vkDevice, "vkGetAccelerationStructureHandleNV"));
-    vkGetAccelerationStructureMemoryRequirementsNV = reinterpret_cast<PFN_vkGetAccelerationStructureMemoryRequirementsNV>(vkGetDeviceProcAddr(vkDevice, "vkGetAccelerationStructureMemoryRequirementsNV"));
-    vkCmdBuildAccelerationStructureNV = reinterpret_cast<PFN_vkCmdBuildAccelerationStructureNV>(vkGetDeviceProcAddr(vkDevice, "vkCmdBuildAccelerationStructureNV"));
-    vkCreateRayTracingPipelinesNV = reinterpret_cast<PFN_vkCreateRayTracingPipelinesNV>(vkGetDeviceProcAddr(vkDevice, "vkCreateRayTracingPipelinesNV"));
-    vkGetRayTracingShaderGroupHandlesNV = reinterpret_cast<PFN_vkGetRayTracingShaderGroupHandlesNV>(vkGetDeviceProcAddr(vkDevice, "vkGetRayTracingShaderGroupHandlesNV"));
-    vkCmdTraceRaysNV = reinterpret_cast<PFN_vkCmdTraceRaysNV>(vkGetDeviceProcAddr(vkDevice, "vkCmdTraceRaysNV"));
-
-    // Query the ray tracing properties of the current implementation, we will need them later on
-    VkPhysicalDeviceRayTracingPropertiesNV rayTracingProperties{};
-    rayTracingProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PROPERTIES_NV;
-    VkPhysicalDeviceProperties2 deviceProps2{};
-    deviceProps2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
-    deviceProps2.pNext = &rayTracingProperties;
-    vkGetPhysicalDeviceProperties2(vkPhysicalDevice, &deviceProps2);
-
+    // First we need to describe geometry of the object.
+    // Geometry refers to the vertex buffer and could be either indexed or not indexed.
+    // We use not indexed geometry for simplicity.
     VkGeometryNV geometry{};
     geometry.sType = VK_STRUCTURE_TYPE_GEOMETRY_NV;
     geometry.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_NV;
@@ -1084,9 +928,6 @@ int main()
     geometry.geometry.triangles.vertexCount = static_cast<uint32_t>(vertices.size());
     geometry.geometry.triangles.vertexStride = sizeof(glm::vec3);
     geometry.geometry.triangles.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
-    geometry.geometry.triangles.indexData = 0;
-    geometry.geometry.triangles.indexOffset = 0;
-    geometry.geometry.triangles.indexCount = 0;
     geometry.geometry.triangles.indexType = VK_INDEX_TYPE_NONE_NV;
     geometry.geometry.triangles.transformData = VK_NULL_HANDLE;
     geometry.geometry.triangles.transformOffset = 0;
@@ -1094,644 +935,581 @@ int main()
     geometry.geometry.aabbs.sType = { VK_STRUCTURE_TYPE_GEOMETRY_AABB_NV };
     geometry.flags = VK_GEOMETRY_OPAQUE_BIT_NV;
 
-    // CREATE BLAS
+    // Fill in acceleration structure info.
+    // For blas we provide geometry and ignore instances.
+    VkAccelerationStructureInfoNV blasInfo{};
+    blasInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_INFO_NV;
+    blasInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_NV;
+    blasInfo.instanceCount = 0;
+    blasInfo.geometryCount = 1;
+    blasInfo.pGeometries = &geometry;
 
-    {
-        VkAccelerationStructureInfoNV accelerationStructureInfo{};
-        accelerationStructureInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_INFO_NV;
-        accelerationStructureInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_NV;
-        accelerationStructureInfo.instanceCount = 0;
-        accelerationStructureInfo.geometryCount = 1;
-        accelerationStructureInfo.pGeometries = &geometry;
-
-        VkAccelerationStructureCreateInfoNV accelerationStructureCI{};
-        accelerationStructureCI.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_NV;
-        accelerationStructureCI.info = accelerationStructureInfo;
-        /*VK_CHECK_RESULT(*/
-        vkCreateAccelerationStructureNV(vkDevice, &accelerationStructureCI, nullptr, &bottomLevelAS.accelerationStructure);
-
-        VkAccelerationStructureMemoryRequirementsInfoNV memoryRequirementsInfo{};
-        memoryRequirementsInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_MEMORY_REQUIREMENTS_INFO_NV;
-        memoryRequirementsInfo.type = VK_ACCELERATION_STRUCTURE_MEMORY_REQUIREMENTS_TYPE_OBJECT_NV;
-        memoryRequirementsInfo.accelerationStructure = bottomLevelAS.accelerationStructure;
-
-        VkMemoryRequirements2 memoryRequirements2{};
-        memoryRequirements2.sType = VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2;
-        vkGetAccelerationStructureMemoryRequirementsNV(vkDevice, &memoryRequirementsInfo, &memoryRequirements2);
-
-        VkMemoryAllocateInfo memoryAllocateInfo{};
-        memoryAllocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        memoryAllocateInfo.allocationSize = memoryRequirements2.memoryRequirements.size;
-
-        VkPhysicalDeviceMemoryProperties vkBufferMemProperties;
-        vkGetPhysicalDeviceMemoryProperties(vkPhysicalDevice, &vkBufferMemProperties);
-
-        uint32_t colorImageMemoryTypeInex = UINT32_MAX;
-        for (uint32_t i = 0; i < vkBufferMemProperties.memoryTypeCount; i++) {
-            if ((memoryRequirements2.memoryRequirements.memoryTypeBits & (1 << i)) && (vkBufferMemProperties.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)) {
-                colorImageMemoryTypeInex = i;
-                break;
-            }
-        }
-
-        memoryAllocateInfo.memoryTypeIndex = colorImageMemoryTypeInex;
-        /*VK_CHECK_RESULT(*/
-        vkAllocateMemory(vkDevice, &memoryAllocateInfo, nullptr, &bottomLevelAS.memory);
-
-        VkBindAccelerationStructureMemoryInfoNV accelerationStructureMemoryInfo{};
-        accelerationStructureMemoryInfo.sType = VK_STRUCTURE_TYPE_BIND_ACCELERATION_STRUCTURE_MEMORY_INFO_NV;
-        accelerationStructureMemoryInfo.accelerationStructure = bottomLevelAS.accelerationStructure;
-        accelerationStructureMemoryInfo.memory = bottomLevelAS.memory;
-        /*VK_CHECK_RESULT(*/
-        vkBindAccelerationStructureMemoryNV(vkDevice, 1, &accelerationStructureMemoryInfo);
-
-        /*VK_CHECK_RESULT(*/
-        vkGetAccelerationStructureHandleNV(vkDevice, bottomLevelAS.accelerationStructure, sizeof(uint64_t), &bottomLevelAS.handle);
+    // Acceleration structure create info.
+    VkAccelerationStructureCreateInfoNV blasCreateInfo{};
+    blasCreateInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_NV;
+    blasCreateInfo.info = blasInfo;
+    VkAccelerationStructureNV vkBottomLevelAccelerationStructure;
+    if (vkCreateAccelerationStructureNV(vkDevice, &blasCreateInfo, nullptr, &vkBottomLevelAccelerationStructure) != VK_SUCCESS) {
+        std::cerr << "Failed to create a bottom level acceleration structure!" << std::endl;
+        abort();
     }
 
-    // END CREATE BLAS
+    // Get memory requirements.
+    VkAccelerationStructureMemoryRequirementsInfoNV blasMemoryRequirementsInfo{};
+    blasMemoryRequirementsInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_MEMORY_REQUIREMENTS_INFO_NV;
+    blasMemoryRequirementsInfo.type = VK_ACCELERATION_STRUCTURE_MEMORY_REQUIREMENTS_TYPE_OBJECT_NV;
+    blasMemoryRequirementsInfo.accelerationStructure = vkBottomLevelAccelerationStructure;
+    VkMemoryRequirements2 blasMemoryRequirements2{};
+    blasMemoryRequirements2.sType = VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2;
+    vkGetAccelerationStructureMemoryRequirementsNV(vkDevice, &blasMemoryRequirementsInfo, &blasMemoryRequirements2);
 
+    // Find a suitable memory type.
+    VkMemoryAllocateInfo blasMemoryAllocateInfo{};
+    blasMemoryAllocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    blasMemoryAllocateInfo.allocationSize = blasMemoryRequirements2.memoryRequirements.size;
+    uint32_t colorImageMemoryTypeIndex = UINT32_MAX;
+    for (uint32_t i = 0; i < vkPhysicalDeviceMemoryProperties.memoryTypeCount; i++) {
+        if ((blasMemoryRequirements2.memoryRequirements.memoryTypeBits & (1 << i)) && (vkPhysicalDeviceMemoryProperties.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)) {
+            colorImageMemoryTypeIndex = i;
+            break;
+        }
+    }
+    blasMemoryAllocateInfo.memoryTypeIndex = colorImageMemoryTypeIndex;
+
+    // Allocate memory for the acceleration structure.
+    VkDeviceMemory vkBlasMemory;
+    if (vkAllocateMemory(vkDevice, &blasMemoryAllocateInfo, nullptr, &vkBlasMemory) != VK_SUCCESS) {
+        std::cerr << "Failed to allocate memory!" << std::endl;
+        abort();
+    }
+
+    // Bind bottom level acceleration structure to the memory.
+    VkBindAccelerationStructureMemoryInfoNV blasMemoryInfo{};
+    blasMemoryInfo.sType = VK_STRUCTURE_TYPE_BIND_ACCELERATION_STRUCTURE_MEMORY_INFO_NV;
+    blasMemoryInfo.accelerationStructure = vkBottomLevelAccelerationStructure;
+    blasMemoryInfo.memory = vkBlasMemory;
+    if (vkBindAccelerationStructureMemoryNV(vkDevice, 1, &blasMemoryInfo) != VK_SUCCESS) {
+        std::cerr << "Failed to bind bottom level acceleration structure memory!" << std::endl;
+        abort();
+    }
+
+    // Get acceleration structure handle.
+    uint64_t vkBlasHandle;
+    if (vkGetAccelerationStructureHandleNV(vkDevice, vkBottomLevelAccelerationStructure, sizeof(uint64_t), &vkBlasHandle) != VK_SUCCESS) {
+        std::cerr << "Failed to get bottom level acceleration structure handle!" << std::endl;
+        abort();
+    }
+
+    // ==========================================================================
+    //                    STEP 16: Create a TLAS
+    // ==========================================================================
+    // Top level acceleration structure refers to a blas and create a couple of
+    // instances of the same geometry having its own transformation.
+    // So BLAS defines pure geometry and TLAS applies transformation on top.
+    // Therefore one geometry may be reused several times in different positions.
+    // The geometry instance should be placed into an "instance buffer", so
+    // it is accessible by the graphic card in the build stage.
+    // ==========================================================================
+
+    // -----------------------------
+    // 1: Create a geometry instance
+    // -----------------------------
+
+    // Transformation that we want to apply to the created geometry.
+    // So far it is just a unit matrix.
     VkTransformMatrixKHR transform = {
-        1.0f, 0.0f, 0.0f, 0.0f,
-        0.0f, 1.0f, 0.0f, 0.0f,
-        0.0f, 0.0f, 1.0f, 0.0f,
+        {
+            { 1.0f, 0.0f, 0.0f, 0.0f },
+            { 0.0f, 1.0f, 0.0f, 0.0f },
+            { 0.0f, 0.0f, 1.0f, 0.0f },
+        }
     };
 
+    // Create an instance of BLAS having the given transformation.
     VkAccelerationStructureInstanceKHR geometryInstance{};
     geometryInstance.transform = transform;
     geometryInstance.instanceCustomIndex = 0;
     geometryInstance.mask = 0xff;
     geometryInstance.instanceShaderBindingTableRecordOffset = 0;
     geometryInstance.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_CULL_DISABLE_BIT_NV;
-    geometryInstance.accelerationStructureReference = bottomLevelAS.handle;
+    geometryInstance.accelerationStructureReference = vkBlasHandle;
 
-    VkBuffer m_instance_buffer_handle;
+    // Describe an intance buffer.
+    VkBufferCreateInfo vkInstanceBufferInfo{};
+    vkInstanceBufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    vkInstanceBufferInfo.size = sizeof(VkAccelerationStructureInstanceKHR);
+    vkInstanceBufferInfo.usage = VK_BUFFER_USAGE_RAY_TRACING_BIT_NV;
+    vkInstanceBufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-    {
-        VkBuffer m_handle;
-        VkDeviceMemory m_memory;
-        VkDeviceSize m_size;
+    // ----------------------------
+    // 2: Create an instance buffer
+    // ----------------------------
 
-        // Describe a buffer.
-        VkBufferCreateInfo vkVertexBufferInfo{};
-        vkVertexBufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-        vkVertexBufferInfo.size = sizeof(VkAccelerationStructureInstanceKHR);
-        vkVertexBufferInfo.usage = VK_BUFFER_USAGE_RAY_TRACING_BIT_NV;
-        vkVertexBufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-        // Create a buffer.
-        if (vkCreateBuffer(vkDevice, &vkVertexBufferInfo, nullptr, &m_instance_buffer_handle) != VK_SUCCESS) {
-            std::cerr << "Failed to create a vertex buffer!" << std::endl;
-            abort();
-        }
-
-        // Retrieve memory requirements for the vertex buffer.
-        VkMemoryRequirements vkVertexBufferMemRequirements;
-        vkGetBufferMemoryRequirements(vkDevice, m_instance_buffer_handle, &vkVertexBufferMemRequirements);
-
-        // Define memory allocate info.
-        VkMemoryAllocateInfo vkVertexBufferAllocInfo{};
-        vkVertexBufferAllocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        vkVertexBufferAllocInfo.allocationSize = vkVertexBufferMemRequirements.size;
-        // Find a suitable memory type.
-
-
-
-        VkPhysicalDeviceMemoryProperties vkBufferMemProperties;
-        vkGetPhysicalDeviceMemoryProperties(vkPhysicalDevice, &vkBufferMemProperties);
-
-        uint32_t colorImageMemoryTypeInex = UINT32_MAX;
-        for (uint32_t i = 0; i < vkBufferMemProperties.memoryTypeCount; i++) {
-            if ((vkVertexBufferMemRequirements.memoryTypeBits & (1 << i)) && (vkBufferMemProperties.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)
-                                                                          && (vkBufferMemProperties.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT )) {
-                colorImageMemoryTypeInex = i;
-                break;
-            }
-        }
-
-
-
-        vkVertexBufferAllocInfo.memoryTypeIndex = colorImageMemoryTypeInex;
-        // Allocate memory for the vertex buffer.
-        if (vkAllocateMemory(vkDevice, &vkVertexBufferAllocInfo, nullptr, &m_memory) != VK_SUCCESS) {
-            std::cerr << "Failed to allocate memroy for the vertex buffer!" << std::endl;
-            abort();
-        }
-
-        // Bind the buffer to the allocated memory.
-        vkBindBufferMemory(vkDevice, m_instance_buffer_handle, m_memory, 0);
-
-
-
-
-
-
-
-        // Copy our vertices to the allocated memory.
-        void* vertexBufferMemoryData;
-        vkMapMemory(vkDevice, m_memory, 0, sizeof(geometryInstance), 0, &vertexBufferMemoryData);
-        memcpy(vertexBufferMemoryData, &geometryInstance, sizeof(geometryInstance));
-        vkUnmapMemory(vkDevice, m_memory);
+    // Create an instance buffer.
+    VkBuffer vkInstanceBufferHandle;
+    if (vkCreateBuffer(vkDevice, &vkInstanceBufferInfo, nullptr, &vkInstanceBufferHandle) != VK_SUCCESS) {
+        std::cerr << "Failed to create an instance buffer!" << std::endl;
+        abort();
     }
 
-    // CREATE TLAS
-    {
-        VkAccelerationStructureInfoNV accelerationStructureInfo{};
-        accelerationStructureInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_INFO_NV;
-        accelerationStructureInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_NV;
-        accelerationStructureInfo.instanceCount = 2;
-        accelerationStructureInfo.geometryCount = 0;
+    // Retrieve memory requirements for the instance buffer.
+    VkMemoryRequirements vkInstanceBufferMemRequirements;
+    vkGetBufferMemoryRequirements(vkDevice, vkInstanceBufferHandle, &vkInstanceBufferMemRequirements);
 
-        VkAccelerationStructureCreateInfoNV accelerationStructureCI{};
-        accelerationStructureCI.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_NV;
-        accelerationStructureCI.info = accelerationStructureInfo;
-        /*VK_CHECK_RESULT*/
-        vkCreateAccelerationStructureNV(vkDevice, &accelerationStructureCI, nullptr, &topLevelAS.accelerationStructure);
+    // Define memory allocate info.
+    VkMemoryAllocateInfo vkInstanceBufferAllocInfo{};
+    vkInstanceBufferAllocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    vkInstanceBufferAllocInfo.allocationSize = vkInstanceBufferMemRequirements.size;
 
-        VkAccelerationStructureMemoryRequirementsInfoNV memoryRequirementsInfo{};
-        memoryRequirementsInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_MEMORY_REQUIREMENTS_INFO_NV;
-        memoryRequirementsInfo.type = VK_ACCELERATION_STRUCTURE_MEMORY_REQUIREMENTS_TYPE_OBJECT_NV;
-        memoryRequirementsInfo.accelerationStructure = topLevelAS.accelerationStructure;
-
-        VkMemoryRequirements2 memoryRequirements2{};
-        memoryRequirements2.sType = VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2;
-        vkGetAccelerationStructureMemoryRequirementsNV(vkDevice, &memoryRequirementsInfo, &memoryRequirements2);
-
-        VkMemoryAllocateInfo memoryAllocateInfo{};
-        memoryAllocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        memoryAllocateInfo.allocationSize = memoryRequirements2.memoryRequirements.size;
-
-        VkPhysicalDeviceMemoryProperties vkBufferMemProperties;
-        vkGetPhysicalDeviceMemoryProperties(vkPhysicalDevice, &vkBufferMemProperties);
-
-        uint32_t colorImageMemoryTypeInex = UINT32_MAX;
-        for (uint32_t i = 0; i < vkBufferMemProperties.memoryTypeCount; i++) {
-            if ((memoryRequirements2.memoryRequirements.memoryTypeBits & (1 << i)) && (vkBufferMemProperties.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)) {
-                colorImageMemoryTypeInex = i;
-                break;
-            }
+    // Find a suitable memory type.
+    VkMemoryPropertyFlags vkInstanceBufferMemoryFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+    uint32_t instanceBufferMemoryTypeInex = UINT32_MAX;
+    for (uint32_t i = 0; i < vkPhysicalDeviceMemoryProperties.memoryTypeCount; i++) {
+        if ((vkInstanceBufferMemRequirements.memoryTypeBits & (1 << i)) && (vkPhysicalDeviceMemoryProperties.memoryTypes[i].propertyFlags & vkInstanceBufferMemoryFlags) == vkInstanceBufferMemoryFlags) {
+            instanceBufferMemoryTypeInex = i;
+            break;
         }
-
-        /*VK_CHECK_RESULT*/
-        vkAllocateMemory(vkDevice, &memoryAllocateInfo, nullptr, &topLevelAS.memory);
-
-        VkBindAccelerationStructureMemoryInfoNV accelerationStructureMemoryInfo{};
-        accelerationStructureMemoryInfo.sType = VK_STRUCTURE_TYPE_BIND_ACCELERATION_STRUCTURE_MEMORY_INFO_NV;
-        accelerationStructureMemoryInfo.accelerationStructure = topLevelAS.accelerationStructure;
-        accelerationStructureMemoryInfo.memory = topLevelAS.memory;
-        /*VK_CHECK_RESULT*/
-        vkBindAccelerationStructureMemoryNV(vkDevice, 1, &accelerationStructureMemoryInfo);
-
-        /*VK_CHECK_RESULT*/
-        vkGetAccelerationStructureHandleNV(vkDevice, topLevelAS.accelerationStructure, sizeof(uint64_t), &topLevelAS.handle);
     }
-    // END CREATE TLAS
+    vkInstanceBufferAllocInfo.memoryTypeIndex = instanceBufferMemoryTypeInex;
 
-    // Acceleration structure build requires some scratch space to store temporary information
-    VkAccelerationStructureMemoryRequirementsInfoNV memoryRequirementsInfo{};
-    memoryRequirementsInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_MEMORY_REQUIREMENTS_INFO_NV;
-    memoryRequirementsInfo.type = VK_ACCELERATION_STRUCTURE_MEMORY_REQUIREMENTS_TYPE_BUILD_SCRATCH_NV;
+    // Allocate memory for the instance buffer.
+    VkDeviceMemory vkInstanceBufferMemory;
+    if (vkAllocateMemory(vkDevice, &vkInstanceBufferAllocInfo, nullptr, &vkInstanceBufferMemory) != VK_SUCCESS) {
+        std::cerr << "Failed to allocate memory for the instance buffer!" << std::endl;
+        abort();
+    }
 
-    VkMemoryRequirements2 memReqBottomLevelAS;
+    // Bind the buffer to the allocated memory.
+    vkBindBufferMemory(vkDevice, vkInstanceBufferHandle, vkInstanceBufferMemory, 0);
+
+    // Copy our geometry to the allocated memory.
+    void* instanceBufferMemoryData;
+    vkMapMemory(vkDevice, vkInstanceBufferMemory, 0, sizeof(geometryInstance), 0, &instanceBufferMemoryData);
+    memcpy(instanceBufferMemoryData, &geometryInstance, sizeof(geometryInstance));
+    vkUnmapMemory(vkDevice, vkInstanceBufferMemory);
+
+    // --------------
+    // 3: Create TLAS
+    // --------------
+
+    // Fill in acceleration structure info.
+    // For tlas we provide intances and ignore geometry.
+    VkAccelerationStructureInfoNV tlasInfo{};
+    tlasInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_INFO_NV;
+    tlasInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_NV;
+    tlasInfo.instanceCount = 1;
+    tlasInfo.geometryCount = 0;
+
+    // Acceleration structure create info.
+    VkAccelerationStructureCreateInfoNV tlasCreateInfo{};
+    tlasCreateInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_NV;
+    tlasCreateInfo.info = tlasInfo;
+    VkAccelerationStructureNV vkTopLevelAccelerationStructure;
+    if (vkCreateAccelerationStructureNV(vkDevice, &tlasCreateInfo, nullptr, &vkTopLevelAccelerationStructure) != VK_SUCCESS) {
+        std::cerr << "Failed to create a top level acceleration structure!" << std::endl;
+        abort();
+    }
+
+    // Get memory requirements.
+    VkAccelerationStructureMemoryRequirementsInfoNV tlasMemoryRequirementsInfo{};
+    tlasMemoryRequirementsInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_MEMORY_REQUIREMENTS_INFO_NV;
+    tlasMemoryRequirementsInfo.type = VK_ACCELERATION_STRUCTURE_MEMORY_REQUIREMENTS_TYPE_OBJECT_NV;
+    tlasMemoryRequirementsInfo.accelerationStructure = vkTopLevelAccelerationStructure;
+    VkMemoryRequirements2 tlasMemoryRequirements2{};
+    tlasMemoryRequirements2.sType = VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2;
+    vkGetAccelerationStructureMemoryRequirementsNV(vkDevice, &tlasMemoryRequirementsInfo, &tlasMemoryRequirements2);
+
+    // Find a suitable memory type.
+    VkMemoryAllocateInfo tlasMemoryAllocateInfo{};
+    tlasMemoryAllocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    tlasMemoryAllocateInfo.allocationSize = tlasMemoryRequirements2.memoryRequirements.size;
+    uint32_t tlasMemoryTypeIndex = UINT32_MAX;
+    for (uint32_t i = 0; i < vkPhysicalDeviceMemoryProperties.memoryTypeCount; i++) {
+        if ((tlasMemoryRequirements2.memoryRequirements.memoryTypeBits & (1 << i)) && (vkPhysicalDeviceMemoryProperties.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)) {
+            tlasMemoryTypeIndex = i;
+            break;
+        }
+    }
+    tlasMemoryAllocateInfo.memoryTypeIndex = tlasMemoryTypeIndex;
+
+    // Allocate memory for the acceleration structure.
+    VkDeviceMemory vkTlasMemory;
+    if (vkAllocateMemory(vkDevice, &tlasMemoryAllocateInfo, nullptr, &vkTlasMemory) != VK_SUCCESS) {
+        std::cerr << "Failed to allocate memory!" << std::endl;
+        abort();
+    }
+
+    // Bind top level acceleration structure to the memory.
+    VkBindAccelerationStructureMemoryInfoNV tlasMemoryInfo{};
+    tlasMemoryInfo.sType = VK_STRUCTURE_TYPE_BIND_ACCELERATION_STRUCTURE_MEMORY_INFO_NV;
+    tlasMemoryInfo.accelerationStructure = vkTopLevelAccelerationStructure;
+    tlasMemoryInfo.memory = vkTlasMemory;
+    if (vkBindAccelerationStructureMemoryNV(vkDevice, 1, &tlasMemoryInfo) != VK_SUCCESS) {
+        std::cerr << "Failed to bind top level acceleration structure memory!" << std::endl;
+        abort();
+    }
+
+    // Get acceleration structure handle.
+    uint64_t vkTlasHandle;
+    if (vkGetAccelerationStructureHandleNV(vkDevice, vkTopLevelAccelerationStructure, sizeof(uint64_t), &vkTlasHandle) != VK_SUCCESS) {
+        std::cerr << "Failed to get top level acceleration structure handle!" << std::endl;
+        abort();
+    }
+
+    // ==========================================================================
+    //                    STEP 17: Create a scratch buffer
+    // ==========================================================================
+    // Acceleration structures should be build on the graphical card before they
+    // are used for ray tracing. The build process requires some additional
+    // memory we have to allocate. This memory is called a scratch buffer.
+    // ==========================================================================
+
+    // Collect memory requirements for BLAS and TLAS.
+    VkAccelerationStructureMemoryRequirementsInfoNV asMemoryRequirementsInfo{};
+    asMemoryRequirementsInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_MEMORY_REQUIREMENTS_INFO_NV;
+    asMemoryRequirementsInfo.type = VK_ACCELERATION_STRUCTURE_MEMORY_REQUIREMENTS_TYPE_BUILD_SCRATCH_NV;
+    VkMemoryRequirements2 memReqBottomLevelAS{};
     memReqBottomLevelAS.sType = VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2;
-    memoryRequirementsInfo.accelerationStructure = bottomLevelAS.accelerationStructure;
-    vkGetAccelerationStructureMemoryRequirementsNV(vkDevice, &memoryRequirementsInfo, &memReqBottomLevelAS);
-
-    VkMemoryRequirements2 memReqTopLevelAS;
+    asMemoryRequirementsInfo.accelerationStructure = vkBottomLevelAccelerationStructure;
+    vkGetAccelerationStructureMemoryRequirementsNV(vkDevice, &asMemoryRequirementsInfo, &memReqBottomLevelAS);
+    VkMemoryRequirements2 memReqTopLevelAS{};
     memReqTopLevelAS.sType = VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2;
-    memoryRequirementsInfo.accelerationStructure = topLevelAS.accelerationStructure;
-    vkGetAccelerationStructureMemoryRequirementsNV(vkDevice, &memoryRequirementsInfo, &memReqTopLevelAS);
+    asMemoryRequirementsInfo.accelerationStructure = vkTopLevelAccelerationStructure;
+    vkGetAccelerationStructureMemoryRequirementsNV(vkDevice, &asMemoryRequirementsInfo, &memReqTopLevelAS);
 
+    // Make the scratch buffer enough big for both of them.
     const VkDeviceSize scratchBufferSize = std::max(memReqBottomLevelAS.memoryRequirements.size, memReqTopLevelAS.memoryRequirements.size);
 
-    VkBuffer m_scratch_buffer_handle;
+    // Describe a buffer.
+    VkBufferCreateInfo vkScratchBufferInfo{};
+    vkScratchBufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    vkScratchBufferInfo.size = scratchBufferSize;
+    vkScratchBufferInfo.usage = VK_BUFFER_USAGE_RAY_TRACING_BIT_NV;
+    vkScratchBufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-    {
-        VkBuffer m_handle;
-        VkDeviceMemory m_memory;
-        VkDeviceSize m_size;
-
-        // Describe a buffer.
-        VkBufferCreateInfo vkVertexBufferInfo{};
-        vkVertexBufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-        vkVertexBufferInfo.size = scratchBufferSize;
-        vkVertexBufferInfo.usage = VK_BUFFER_USAGE_RAY_TRACING_BIT_NV;
-        vkVertexBufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-        // Create a buffer.
-        if (vkCreateBuffer(vkDevice, &vkVertexBufferInfo, nullptr, &m_scratch_buffer_handle) != VK_SUCCESS) {
-            std::cerr << "Failed to create a vertex buffer!" << std::endl;
-            abort();
-        }
-
-        // Retrieve memory requirements for the vertex buffer.
-        VkMemoryRequirements vkVertexBufferMemRequirements;
-        vkGetBufferMemoryRequirements(vkDevice, m_scratch_buffer_handle, &vkVertexBufferMemRequirements);
-
-        // Define memory allocate info.
-        VkMemoryAllocateInfo vkVertexBufferAllocInfo{};
-        vkVertexBufferAllocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        vkVertexBufferAllocInfo.allocationSize = vkVertexBufferMemRequirements.size;
-        // Find a suitable memory type.
-
-
-
-        VkPhysicalDeviceMemoryProperties vkBufferMemProperties;
-        vkGetPhysicalDeviceMemoryProperties(vkPhysicalDevice, &vkBufferMemProperties);
-
-        uint32_t colorImageMemoryTypeInex = UINT32_MAX;
-        for (uint32_t i = 0; i < vkBufferMemProperties.memoryTypeCount; i++) {
-            if ((vkVertexBufferMemRequirements.memoryTypeBits & (1 << i)) && (vkBufferMemProperties.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)) {
-                colorImageMemoryTypeInex = i;
-                break;
-            }
-        }
-
-
-
-        vkVertexBufferAllocInfo.memoryTypeIndex = colorImageMemoryTypeInex;
-        // Allocate memory for the vertex buffer.
-        if (vkAllocateMemory(vkDevice, &vkVertexBufferAllocInfo, nullptr, &m_memory) != VK_SUCCESS) {
-            std::cerr << "Failed to allocate memroy for the vertex buffer!" << std::endl;
-            abort();
-        }
-
-        // Bind the buffer to the allocated memory.
-        vkBindBufferMemory(vkDevice, m_scratch_buffer_handle, m_memory, 0);
+    // Create a buffer.
+    VkBuffer vkScratchBufferHandle;
+    if (vkCreateBuffer(vkDevice, &vkScratchBufferInfo, nullptr, &vkScratchBufferHandle) != VK_SUCCESS) {
+        std::cerr << "Failed to create a scratch buffer!" << std::endl;
+        abort();
     }
 
+    // Retrieve memory requirements for the vertex buffer.
+    VkMemoryRequirements vkScratchBufferMemRequirements;
+    vkGetBufferMemoryRequirements(vkDevice, vkScratchBufferHandle, &vkScratchBufferMemRequirements);
 
+    // Define memory allocate info.
+    VkMemoryAllocateInfo vkScratchBufferAllocInfo{};
+    vkScratchBufferAllocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    vkScratchBufferAllocInfo.allocationSize = vkScratchBufferMemRequirements.size;
 
+    // Find a suitable memory type.
+    uint32_t scratchBufferMemoryTypeInex = UINT32_MAX;
+    for (uint32_t i = 0; i < vkPhysicalDeviceMemoryProperties.memoryTypeCount; i++) {
+        if ((vkScratchBufferMemRequirements.memoryTypeBits & (1 << i)) && (vkPhysicalDeviceMemoryProperties.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)) {
+            scratchBufferMemoryTypeInex = i;
+            break;
+        }
+    }
+    vkScratchBufferAllocInfo.memoryTypeIndex = scratchBufferMemoryTypeInex;
 
+    // Allocate memory for the scratch buffer.
+    VkDeviceMemory vkScratchBufferMemory;
+    if (vkAllocateMemory(vkDevice, &vkScratchBufferAllocInfo, nullptr, &vkScratchBufferMemory) != VK_SUCCESS) {
+        std::cerr << "Failed to allocate memory for the scratch buffer!" << std::endl;
+        abort();
+    }
 
+    // Bind the buffer to the allocated memory.
+    vkBindBufferMemory(vkDevice, vkScratchBufferHandle, vkScratchBufferMemory, 0);
 
-
-
-
-
-
-
-
-
-
-
-
-
-
+    // ==========================================================================
+    //                    STEP 18: Build acceleration structures
+    // ==========================================================================
+    // Acceleration structures should be built on the graphical card before
+    // they are used first time. To do this we need to create a temporary
+    // command pool and execute build commands.
+    // ==========================================================================
 
     // Pick a graphics queue.
     VkQueue vkGraphicsQueue;
     vkGetDeviceQueue(vkDevice, queueFamilyIndices.graphicsFamily.value(), 0, &vkGraphicsQueue);
 
-
-
-
-
-
-
-
-
-
-
-
-
-    auto executeCommandBuffer = [=](std::function< void (const VkCommandBuffer&) > executeFunction)
-    {
-        // Describe a command pool.
-        VkCommandPoolCreateInfo vkASPoolInfo{};
-        vkASPoolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-        vkASPoolInfo.queueFamilyIndex = queueFamilyIndices.graphicsFamily.value();
-        vkASPoolInfo.flags = 0;
-
-        VkCommandPool vkASCommandPool;
-        if (vkCreateCommandPool(vkDevice, &vkASPoolInfo, nullptr, &vkASCommandPool) != VK_SUCCESS) {
-            std::cerr << "Failed to create a command pool!" << std::endl;
-            abort();
-        }
-
-        VkCommandBufferAllocateInfo cmdBufAllocateInfo {};
-        cmdBufAllocateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-        cmdBufAllocateInfo.commandPool = vkASCommandPool;
-        cmdBufAllocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-        cmdBufAllocateInfo.commandBufferCount = 1;
-
-        VkCommandBuffer cmdBuffer;
-        /*VK_CHECK_RESULT*/(vkAllocateCommandBuffers(vkDevice, &cmdBufAllocateInfo, &cmdBuffer));
-        VkCommandBufferBeginInfo cmdBufInfo {};
-        cmdBufInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-        /*VK_CHECK_RESULT*/(vkBeginCommandBuffer(cmdBuffer, &cmdBufInfo));
-
-        executeFunction(cmdBuffer);
-
-        /*VK_CHECK_RESULT*/(vkEndCommandBuffer(cmdBuffer));
-
-        VkSubmitInfo submitInfo {};
-        submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-        submitInfo.commandBufferCount = 1;
-        submitInfo.pCommandBuffers = &cmdBuffer;
-        // Create fence to ensure that the command buffer has finished executing
-        VkFenceCreateInfo fenceInfo {};
-        fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-        fenceInfo.flags = 0;
-        VkFence fence;
-        /*VK_CHECK_RESULT*/(vkCreateFence(vkDevice, &fenceInfo, nullptr, &fence));
-        // Submit to the queue
-        vkQueueSubmit(vkGraphicsQueue, 1, &submitInfo, fence);
-        // Wait for the fence to signal that command buffer has finished executing
-        /*VK_CHECK_RESULT*/(vkWaitForFences(vkDevice, 1, &fence, VK_TRUE, UINT64_MAX));
-        vkDestroyFence(vkDevice, fence, nullptr);
-        vkFreeCommandBuffers(vkDevice, vkASCommandPool, 1, &cmdBuffer);
-    };
-
-
-
-
-
-
-
-
-
-
-    executeCommandBuffer([&](const VkCommandBuffer& cmdBuffer) {
-                VkAccelerationStructureInfoNV buildInfo{};
-                buildInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_INFO_NV;
-                buildInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_NV;
-                buildInfo.geometryCount = 1;
-                buildInfo.pGeometries = &geometry;
-
-                vkCmdBuildAccelerationStructureNV(
-                            cmdBuffer,
-                            &buildInfo,
-                            VK_NULL_HANDLE,
-                            0,
-                            VK_FALSE,
-                            bottomLevelAS.accelerationStructure,
-                            VK_NULL_HANDLE,
-                            m_scratch_buffer_handle,
-                            0);
-
-                VkMemoryBarrier memoryBarrier {};
-                memoryBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-                memoryBarrier.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_NV | VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_NV;
-                memoryBarrier.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_NV | VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_NV;
-                vkCmdPipelineBarrier(cmdBuffer, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_NV, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_NV, 0, 1, &memoryBarrier, 0, 0, 0, 0);
-
-                buildInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_NV;
-                buildInfo.pGeometries = 0;
-                buildInfo.geometryCount = 0;
-                buildInfo.instanceCount = 1;
-
-                vkCmdBuildAccelerationStructureNV(
-                            cmdBuffer,
-                            &buildInfo,
-                            m_instance_buffer_handle,
-                            0,
-                            VK_FALSE,
-                            topLevelAS.accelerationStructure,
-                            VK_NULL_HANDLE,
-                            m_scratch_buffer_handle,
-                            0);
-
-                vkCmdPipelineBarrier(cmdBuffer, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_NV, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_NV, 0, 1, &memoryBarrier, 0, 0, 0, 0);
-            });
-
-
-
-
-
-
-
-
-
-
-    VkImage m_storage_image;
-    VkImageView m_storage_image_view;
-
-    {
-        VkDeviceMemory m_colorImageMemory;
-
-        // Description of an image for resolve attachment.
-        VkImageCreateInfo vkColorImageInfo{};
-        vkColorImageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-        vkColorImageInfo.imageType = VK_IMAGE_TYPE_2D;
-        vkColorImageInfo.extent.width = vkSelectedExtent.width;
-        vkColorImageInfo.extent.height = vkSelectedExtent.height;
-        vkColorImageInfo.extent.depth = 1;
-        vkColorImageInfo.mipLevels = 1;
-        vkColorImageInfo.arrayLayers = 1;
-        vkColorImageInfo.format = vkSelectedFormat.format;
-        vkColorImageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-        vkColorImageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        vkColorImageInfo.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
-        vkColorImageInfo.samples = VkSampleCountFlagBits::VK_SAMPLE_COUNT_1_BIT;
-        vkColorImageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-        // Create an image for resolve attachment.
-        if (vkCreateImage(vkDevice, &vkColorImageInfo, nullptr, &m_storage_image) != VK_SUCCESS) {
-            std::cerr << "Failed to create an image!" << std::endl;
-            abort();
-        }
-
-        // Get memory requirements.
-        VkMemoryRequirements vkMemRequirements;
-        vkGetImageMemoryRequirements(vkDevice, m_storage_image, &vkMemRequirements);
-
-        // Description of memory allocation.
-        VkMemoryAllocateInfo vkColorImageAllocInfo{};
-        vkColorImageAllocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        vkColorImageAllocInfo.allocationSize = vkMemRequirements.size;
-        // Find memory type.
-        VkPhysicalDeviceMemoryProperties vkBufferMemProperties;
-        vkGetPhysicalDeviceMemoryProperties(vkPhysicalDevice, &vkBufferMemProperties);
-
-        uint32_t colorImageMemoryTypeInex = UINT32_MAX;
-        for (uint32_t i = 0; i < vkBufferMemProperties.memoryTypeCount; i++) {
-            if ((vkMemRequirements.memoryTypeBits & (1 << i)) && (vkBufferMemProperties.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)) {
-                colorImageMemoryTypeInex = i;
-                break;
-            }
-        }
-        vkColorImageAllocInfo.memoryTypeIndex = colorImageMemoryTypeInex;
-
-        // Allocate memory for resolve attachment.
-        if (vkAllocateMemory(vkDevice, &vkColorImageAllocInfo, nullptr, &m_colorImageMemory) != VK_SUCCESS) {
-            std::cerr << "Failed to allocate image memory!" << std::endl;
-            abort();
-        }
-
-        // Bind the image to the memory.
-        vkBindImageMemory(vkDevice, m_storage_image, m_colorImageMemory, 0);
-
-        // Describe an image view for resolve attachment.
-        VkImageViewCreateInfo vkColorImageViewInfo{};
-        vkColorImageViewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-        vkColorImageViewInfo.image = m_storage_image;
-        vkColorImageViewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        vkColorImageViewInfo.format = vkSelectedFormat.format;
-        vkColorImageViewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        vkColorImageViewInfo.subresourceRange.baseMipLevel = 0;
-        vkColorImageViewInfo.subresourceRange.levelCount = 1;
-        vkColorImageViewInfo.subresourceRange.baseArrayLayer = 0;
-        vkColorImageViewInfo.subresourceRange.layerCount = 1;
-
-        // Create an image view for resolve attachment.
-        if (vkCreateImageView(vkDevice, &vkColorImageViewInfo, nullptr, &m_storage_image_view) != VK_SUCCESS) {
-            std::cerr << "Failed to create texture image view!" << std::endl;
-            abort();
-        }
+    // Create a command pool.
+    VkCommandPoolCreateInfo vkBuildASPoolInfo{};
+    vkBuildASPoolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    vkBuildASPoolInfo.queueFamilyIndex = queueFamilyIndices.graphicsFamily.value();
+    vkBuildASPoolInfo.flags = 0;
+    VkCommandPool vkBuildASCommandPool;
+    if (vkCreateCommandPool(vkDevice, &vkBuildASPoolInfo, nullptr, &vkBuildASCommandPool) != VK_SUCCESS) {
+        std::cerr << "Failed to create a command pool!" << std::endl;
+        abort();
     }
 
+    // Create one command buffer.
+    VkCommandBufferAllocateInfo vkBuildASCmdBufAllocateInfo{};
+    vkBuildASCmdBufAllocateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    vkBuildASCmdBufAllocateInfo.commandPool = vkBuildASCommandPool;
+    vkBuildASCmdBufAllocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    vkBuildASCmdBufAllocateInfo.commandBufferCount = 1;
+    VkCommandBuffer vkBuildASCmdBuffer;
+    if (vkAllocateCommandBuffers(vkDevice, &vkBuildASCmdBufAllocateInfo, &vkBuildASCmdBuffer) != VK_SUCCESS) {
+        std::cerr << "Failed to allocate command buffers!" << std::endl;
+        abort();
+    }
 
+    // Begin command execution.
+    VkCommandBufferBeginInfo vkBuildASCmdBufferBeginInfo {};
+    vkBuildASCmdBufferBeginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    if (vkBeginCommandBuffer(vkBuildASCmdBuffer, &vkBuildASCmdBufferBeginInfo) != VK_SUCCESS) {
+        std::cerr << "Failed to begin a command buffer!" << std::endl;
+        abort();
+    }
 
+    // Build BLAS
+    VkAccelerationStructureInfoNV buildInfo{};
+    buildInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_INFO_NV;
+    buildInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_NV;
+    buildInfo.geometryCount = 1;
+    buildInfo.pGeometries = &geometry;
+    vkCmdBuildAccelerationStructureNV(
+                vkBuildASCmdBuffer,
+                &buildInfo,
+                VK_NULL_HANDLE,
+                0,
+                VK_FALSE,
+                vkBottomLevelAccelerationStructure,
+                VK_NULL_HANDLE,
+                vkScratchBufferHandle,
+                0);
 
+    // Wait until the build finishes because we use the same scratch buffer for both structures.
+    VkMemoryBarrier memoryBarrier {};
+    memoryBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    memoryBarrier.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_NV | VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_NV;
+    memoryBarrier.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_NV | VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_NV;
+    vkCmdPipelineBarrier(vkBuildASCmdBuffer, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_NV, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_NV, 0, 1, &memoryBarrier, 0, 0, 0, 0);
 
+    // Build TLAS.
+    buildInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_NV;
+    buildInfo.pGeometries = 0;
+    buildInfo.geometryCount = 0;
+    buildInfo.instanceCount = 1;
+    vkCmdBuildAccelerationStructureNV(
+                vkBuildASCmdBuffer,
+                &buildInfo,
+                vkInstanceBufferHandle,
+                0,
+                VK_FALSE,
+                vkTopLevelAccelerationStructure,
+                VK_NULL_HANDLE,
+                vkScratchBufferHandle,
+                0);
 
+    // End command execution.
+    if (vkEndCommandBuffer(vkBuildASCmdBuffer) != VK_SUCCESS) {
+        std::cerr << "Failed to end a command buffer!" << std::endl;
+        abort();
+    }
 
+    // Create fence that will suspend the execution until GPU finishes.
+    VkFenceCreateInfo vkBuildASFenceInfo {};
+    vkBuildASFenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    vkBuildASFenceInfo.flags = 0;
+    VkFence fence;
+    if (vkCreateFence(vkDevice, &vkBuildASFenceInfo, nullptr, &fence) != VK_SUCCESS) {
+        std::cerr << "Failed to create a fence!" << std::endl;
+        abort();
+    }
 
+    // Submit the command buffer to the queue.
+    VkSubmitInfo vkBuildASsubmitInfo{};
+    vkBuildASsubmitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    vkBuildASsubmitInfo.commandBufferCount = 1;
+    vkBuildASsubmitInfo.pCommandBuffers = &vkBuildASCmdBuffer;
+    vkQueueSubmit(vkGraphicsQueue, 1, &vkBuildASsubmitInfo, fence);
 
+    // Wait for the fence to signal that the command buffer has finished executing.
+    if (vkWaitForFences(vkDevice, 1, &fence, VK_TRUE, UINT64_MAX) != VK_SUCCESS) {
+        std::cerr << "Failed to wait for a fence!" << std::endl;
+        abort();
+    }
 
+    // Clean up the command pool and the fence.
+    vkDestroyFence(vkDevice, fence, nullptr);
+    vkFreeCommandBuffers(vkDevice, vkBuildASCommandPool, 1, &vkBuildASCmdBuffer);
+    vkDestroyCommandPool(vkDevice, vkBuildASCommandPool, nullptr);
 
+    // ==========================================================================
+    //                    STEP 19: Create a storage image
+    // ==========================================================================
+    // Ray tracing pipeline does not contain usual color attachments, so
+    // the rendering writes color output into an image and then this image is copied
+    // to the framebuffers. The image we will use is called a storage image.
+    // ==========================================================================
 
-    auto setImageLayout = [=](
-                VkCommandBuffer cmdbuffer,
-                VkImage image,
-                VkImageLayout oldImageLayout,
-                VkImageLayout newImageLayout,
-                VkImageSubresourceRange subresourceRange,
-                VkPipelineStageFlags srcStageMask = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-                VkPipelineStageFlags dstStageMask = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT)
-            {
-                // Create an image barrier object
-                VkImageMemoryBarrier imageMemoryBarrier {};
-                imageMemoryBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-                imageMemoryBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                imageMemoryBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                imageMemoryBarrier.oldLayout = oldImageLayout;
-                imageMemoryBarrier.newLayout = newImageLayout;
-                imageMemoryBarrier.image = image;
-                imageMemoryBarrier.subresourceRange = subresourceRange;
+    // Description of a storage image.
+    VkImageCreateInfo vkStorageImageInfo{};
+    vkStorageImageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    vkStorageImageInfo.imageType = VK_IMAGE_TYPE_2D;
+    vkStorageImageInfo.extent.width = vkSelectedExtent.width;
+    vkStorageImageInfo.extent.height = vkSelectedExtent.height;
+    vkStorageImageInfo.extent.depth = 1;
+    vkStorageImageInfo.mipLevels = 1;
+    vkStorageImageInfo.arrayLayers = 1;
+    vkStorageImageInfo.format = vkSelectedFormat.format;
+    vkStorageImageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+    vkStorageImageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    vkStorageImageInfo.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
+    vkStorageImageInfo.samples = VkSampleCountFlagBits::VK_SAMPLE_COUNT_1_BIT;
+    vkStorageImageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-                // Source layouts (old)
-                // Source access mask controls actions that have to be finished on the old layout
-                // before it will be transitioned to the new layout
-                switch (oldImageLayout)
-                {
-                case VK_IMAGE_LAYOUT_UNDEFINED:
-                    // Image layout is undefined (or does not matter)
-                    // Only valid as initial layout
-                    // No flags required, listed only for completeness
-                    imageMemoryBarrier.srcAccessMask = 0;
-                    break;
+    // Create a storage image.
+    VkImage vkStorageImage;
+    if (vkCreateImage(vkDevice, &vkStorageImageInfo, nullptr, &vkStorageImage) != VK_SUCCESS) {
+        std::cerr << "Failed to create an image!" << std::endl;
+        abort();
+    }
 
-                case VK_IMAGE_LAYOUT_PREINITIALIZED:
-                    // Image is preinitialized
-                    // Only valid as initial layout for linear images, preserves memory contents
-                    // Make sure host writes have been finished
-                    imageMemoryBarrier.srcAccessMask = VK_ACCESS_HOST_WRITE_BIT;
-                    break;
+    // Get memory requirements.
+    VkMemoryRequirements vkStorageImageMemRequirements;
+    vkGetImageMemoryRequirements(vkDevice, vkStorageImage, &vkStorageImageMemRequirements);
 
-                case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:
-                    // Image is a color attachment
-                    // Make sure any writes to the color buffer have been finished
-                    imageMemoryBarrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-                    break;
+    // Find suitable memory type.
+    VkMemoryAllocateInfo vkStorageImageAllocInfo{};
+    vkStorageImageAllocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    vkStorageImageAllocInfo.allocationSize = vkStorageImageMemRequirements.size;
+    uint32_t storageImageMemoryTypeInex = UINT32_MAX;
+    for (uint32_t i = 0; i < vkPhysicalDeviceMemoryProperties.memoryTypeCount; i++) {
+        if ((vkStorageImageMemRequirements.memoryTypeBits & (1 << i)) && (vkPhysicalDeviceMemoryProperties.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)) {
+            storageImageMemoryTypeInex = i;
+            break;
+        }
+    }
+    vkStorageImageAllocInfo.memoryTypeIndex = storageImageMemoryTypeInex;
 
-                case VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL:
-                    // Image is a depth/stencil attachment
-                    // Make sure any writes to the depth/stencil buffer have been finished
-                    imageMemoryBarrier.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-                    break;
+    // Allocate memory for the storage image.
+    VkDeviceMemory vkStorageImageMemory;
+    if (vkAllocateMemory(vkDevice, &vkStorageImageAllocInfo, nullptr, &vkStorageImageMemory) != VK_SUCCESS) {
+        std::cerr << "Failed to allocate image memory!" << std::endl;
+        abort();
+    }
 
-                case VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:
-                    // Image is a transfer source
-                    // Make sure any reads from the image have been finished
-                    imageMemoryBarrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-                    break;
+    // Bind the image to the memory.
+    vkBindImageMemory(vkDevice, vkStorageImage, vkStorageImageMemory, 0);
 
-                case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL:
-                    // Image is a transfer destination
-                    // Make sure any writes to the image have been finished
-                    imageMemoryBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-                    break;
+    // Describe an image view.
+    VkImageViewCreateInfo vkStorageImageViewInfo{};
+    vkStorageImageViewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    vkStorageImageViewInfo.image = vkStorageImage;
+    vkStorageImageViewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    vkStorageImageViewInfo.format = vkSelectedFormat.format;
+    vkStorageImageViewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    vkStorageImageViewInfo.subresourceRange.baseMipLevel = 0;
+    vkStorageImageViewInfo.subresourceRange.levelCount = 1;
+    vkStorageImageViewInfo.subresourceRange.baseArrayLayer = 0;
+    vkStorageImageViewInfo.subresourceRange.layerCount = 1;
 
-                case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL:
-                    // Image is read by a shader
-                    // Make sure any shader reads from the image have been finished
-                    imageMemoryBarrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
-                    break;
-                default:
-                    // Other source layouts aren't handled (yet)
-                    break;
-                }
+    // Create an image view.
+    VkImageView vkStorageImageView;
+    if (vkCreateImageView(vkDevice, &vkStorageImageViewInfo, nullptr, &vkStorageImageView) != VK_SUCCESS) {
+        std::cerr << "Failed to create texture image view!" << std::endl;
+        abort();
+    }
 
-                // Target layouts (new)
-                // Destination access mask controls the dependency for the new image layout
-                switch (newImageLayout)
-                {
-                case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL:
-                    // Image will be used as a transfer destination
-                    // Make sure any writes to the image have been finished
-                    imageMemoryBarrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-                    break;
+    // ==========================================================================
+    //                    STEP 19: Change image layout
+    // ==========================================================================
+    // We have to change the storage image layout in order to proceed.
+    // Vulkan allows to do this via image memory barrier, so we have to create
+    // a temporary command buffer again and execute vkCmdPipelineBarrier().
+    //
+    // See https://www.khronos.org/registry/vulkan/specs/1.2-extensions/html/vkspec.html#synchronization-image-layout-transitions
+    // ==========================================================================
 
-                case VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:
-                    // Image will be used as a transfer source
-                    // Make sure any reads from the image have been finished
-                    imageMemoryBarrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-                    break;
+    // Create a command pool.
+    VkCommandPoolCreateInfo vkSetImageLayoutPoolInfo{};
+    vkSetImageLayoutPoolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    vkSetImageLayoutPoolInfo.queueFamilyIndex = queueFamilyIndices.graphicsFamily.value();
+    vkSetImageLayoutPoolInfo.flags = 0;
+    VkCommandPool vkSetImageLayoutCommandPool;
+    if (vkCreateCommandPool(vkDevice, &vkSetImageLayoutPoolInfo, nullptr, &vkSetImageLayoutCommandPool) != VK_SUCCESS) {
+        std::cerr << "Failed to create a command pool!" << std::endl;
+        abort();
+    }
 
-                case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:
-                    // Image will be used as a color attachment
-                    // Make sure any writes to the color buffer have been finished
-                    imageMemoryBarrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-                    break;
+    // Create one command buffer.
+    VkCommandBufferAllocateInfo vkSetImageLayoutCmdBufAllocateInfo{};
+    vkSetImageLayoutCmdBufAllocateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    vkSetImageLayoutCmdBufAllocateInfo.commandPool = vkSetImageLayoutCommandPool;
+    vkSetImageLayoutCmdBufAllocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    vkSetImageLayoutCmdBufAllocateInfo.commandBufferCount = 1;
+    VkCommandBuffer vkSetImageLayoutCmdBuffer;
+    if (vkAllocateCommandBuffers(vkDevice, &vkSetImageLayoutCmdBufAllocateInfo, &vkSetImageLayoutCmdBuffer) != VK_SUCCESS) {
+        std::cerr << "Failed to allocate command buffers!" << std::endl;
+        abort();
+    }
 
-                case VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL:
-                    // Image layout will be used as a depth/stencil attachment
-                    // Make sure any writes to depth/stencil buffer have been finished
-                    imageMemoryBarrier.dstAccessMask = imageMemoryBarrier.dstAccessMask | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-                    break;
+    // Begin command execution.
+    VkCommandBufferBeginInfo vkSetImageLayoutCmdBufferBeginInfo {};
+    vkSetImageLayoutCmdBufferBeginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    if (vkBeginCommandBuffer(vkSetImageLayoutCmdBuffer, &vkSetImageLayoutCmdBufferBeginInfo) != VK_SUCCESS) {
+        std::cerr << "Failed to begin a command buffer!" << std::endl;
+        abort();
+    }
 
-                case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL:
-                    // Image will be read in a shader (sampler, input attachment)
-                    // Make sure any writes to the image have been finished
-                    if (imageMemoryBarrier.srcAccessMask == 0)
-                    {
-                        imageMemoryBarrier.srcAccessMask = VK_ACCESS_HOST_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
-                    }
-                    imageMemoryBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-                    break;
-                default:
-                    // Other source layouts aren't handled (yet)
-                    break;
-                }
+    // Change image layout.
+    VkImageMemoryBarrier imageMemoryBarrier {};
+    imageMemoryBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    imageMemoryBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    imageMemoryBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    imageMemoryBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    imageMemoryBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    imageMemoryBarrier.image = vkStorageImage;
+    imageMemoryBarrier.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+    imageMemoryBarrier.srcAccessMask = 0;
+    vkCmdPipelineBarrier(
+        vkSetImageLayoutCmdBuffer,
+        VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+        VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+        0,
+        0, nullptr,
+        0, nullptr,
+        1, &imageMemoryBarrier);
 
-                // Put barrier inside setup command buffer
-                vkCmdPipelineBarrier(
-                    cmdbuffer,
-                    srcStageMask,
-                    dstStageMask,
-                    0,
-                    0, nullptr,
-                    0, nullptr,
-                    1, &imageMemoryBarrier);
-            };
+    // End command execution.
+    if (vkEndCommandBuffer(vkSetImageLayoutCmdBuffer) != VK_SUCCESS) {
+        std::cerr << "Failed to end a command buffer!" << std::endl;
+        abort();
+    }
 
+    // Create fence that will suspend the execution until GPU finishes.
+    VkFenceCreateInfo vkSetImageLayoutFenceInfo {};
+    vkSetImageLayoutFenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    vkSetImageLayoutFenceInfo.flags = 0;
+    VkFence vkSetImageLayout;
+    if (vkCreateFence(vkDevice, &vkSetImageLayoutFenceInfo, nullptr, &vkSetImageLayout) != VK_SUCCESS) {
+        std::cerr << "Failed to create a fence!" << std::endl;
+        abort();
+    }
 
+    // Submit the command buffer to the queue.
+    VkSubmitInfo vkSetImageLayoutsubmitInfo{};
+    vkSetImageLayoutsubmitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    vkSetImageLayoutsubmitInfo.commandBufferCount = 1;
+    vkSetImageLayoutsubmitInfo.pCommandBuffers = &vkSetImageLayoutCmdBuffer;
+    vkQueueSubmit(vkGraphicsQueue, 1, &vkSetImageLayoutsubmitInfo, vkSetImageLayout);
 
+    // Wait for the fence to signal that the command buffer has finished executing.
+    if (vkWaitForFences(vkDevice, 1, &vkSetImageLayout, VK_TRUE, UINT64_MAX) != VK_SUCCESS) {
+        std::cerr << "Failed to wait for a fence!" << std::endl;
+        abort();
+    }
 
-
-
-
-
-
-    executeCommandBuffer([&](const VkCommandBuffer& cmdBuffer) {
-                setImageLayout(cmdBuffer, m_storage_image,
-                                VK_IMAGE_LAYOUT_UNDEFINED,
-                                VK_IMAGE_LAYOUT_GENERAL,
-                                { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 });
-            });
-
+    // Clean up the command pool and the fence.
+    vkDestroyFence(vkDevice, vkSetImageLayout, nullptr);
+    vkFreeCommandBuffers(vkDevice, vkSetImageLayoutCommandPool, 1, &vkSetImageLayoutCmdBuffer);
+    vkDestroyCommandPool(vkDevice, vkSetImageLayoutCommandPool, nullptr);
 
 
 
@@ -2002,14 +1780,9 @@ int main()
             vkVertexBufferAllocInfo.allocationSize = vkVertexBufferMemRequirements.size;
             // Find a suitable memory type.
 
-
-
-            VkPhysicalDeviceMemoryProperties vkBufferMemProperties;
-            vkGetPhysicalDeviceMemoryProperties(vkPhysicalDevice, &vkBufferMemProperties);
-
             uint32_t colorImageMemoryTypeInex = UINT32_MAX;
-            for (uint32_t i = 0; i < vkBufferMemProperties.memoryTypeCount; i++) {
-                if ((vkVertexBufferMemRequirements.memoryTypeBits & (1 << i)) && (vkBufferMemProperties.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)) {
+            for (uint32_t i = 0; i < vkPhysicalDeviceMemoryProperties.memoryTypeCount; i++) {
+                if ((vkVertexBufferMemRequirements.memoryTypeBits & (1 << i)) && (vkPhysicalDeviceMemoryProperties.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)) {
                     colorImageMemoryTypeInex = i;
                     break;
                 }
@@ -2020,7 +1793,7 @@ int main()
             vkVertexBufferAllocInfo.memoryTypeIndex = colorImageMemoryTypeInex;
             // Allocate memory for the vertex buffer.
             if (vkAllocateMemory(vkDevice, &vkVertexBufferAllocInfo, nullptr, &m_memory) != VK_SUCCESS) {
-                std::cerr << "Failed to allocate memroy for the vertex buffer!" << std::endl;
+                std::cerr << "Failed to allocate memory for the vertex buffer!" << std::endl;
                 abort();
             }
 
@@ -2109,10 +1882,8 @@ int main()
         // Select suitable memory type.
         uint32_t memTypeIndex = UINT32_MAX;
         VkMemoryPropertyFlags vkMemFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-        VkPhysicalDeviceMemoryProperties vkMemProperties;
-        vkGetPhysicalDeviceMemoryProperties(vkPhysicalDevice, &vkMemProperties);
-        for (uint32_t i = 0; i < vkMemProperties.memoryTypeCount; i++) {
-            if ((vkMemRequirements.memoryTypeBits & (1 << i)) && (vkMemProperties.memoryTypes[i].propertyFlags & vkMemFlags) == vkMemFlags) {
+        for (uint32_t i = 0; i < vkPhysicalDeviceMemoryProperties.memoryTypeCount; i++) {
+            if ((vkMemRequirements.memoryTypeBits & (1 << i)) && (vkPhysicalDeviceMemoryProperties.memoryTypes[i].propertyFlags & vkMemFlags) == vkMemFlags) {
                 memTypeIndex = i;
                 break;
             }
@@ -2210,7 +1981,7 @@ int main()
             VkWriteDescriptorSetAccelerationStructureNV descriptorAccelerationStructureInfo{};
             descriptorAccelerationStructureInfo.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_NV;
             descriptorAccelerationStructureInfo.accelerationStructureCount = 1;
-            descriptorAccelerationStructureInfo.pAccelerationStructures = &topLevelAS.accelerationStructure;
+            descriptorAccelerationStructureInfo.pAccelerationStructures = &vkTopLevelAccelerationStructure;
 
             VkWriteDescriptorSet accelerationStructureWrite{};
             accelerationStructureWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -2222,7 +1993,7 @@ int main()
             accelerationStructureWrite.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_NV;
 
             VkDescriptorImageInfo storageImageDescriptor{};
-            storageImageDescriptor.imageView = m_storage_image_view;
+            storageImageDescriptor.imageView = vkStorageImageView;
             storageImageDescriptor.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
             VkWriteDescriptorSet resultImageWrite {};
@@ -2308,46 +2079,6 @@ int main()
 
 
 
-        // ==========================================================================
-        //                 STEP 26: Create swap chain image views
-        // ==========================================================================
-        // After the swap chain is created, it contains Vulkan images that are
-        // used to transfer rendered picture. In order to work with images
-        // we should create image views.
-        // ==========================================================================
-
-        // Fetch Vulkan images associated to the swap chain.
-        std::vector< VkImage > vkSwapChainImages;
-        uint32_t vkSwapChainImageCount;
-        vkGetSwapchainImagesKHR(vkDevice, vkSwapChain, &vkSwapChainImageCount, nullptr);
-        vkSwapChainImages.resize(vkSwapChainImageCount);
-        vkGetSwapchainImagesKHR(vkDevice, vkSwapChain, &vkSwapChainImageCount, vkSwapChainImages.data());
-
-        // Create image views for each image.
-        std::vector< VkImageView > vkSwapChainImageViews;
-        vkSwapChainImageViews.resize(vkSwapChainImageCount);
-        for (size_t i = 0; i < vkSwapChainImageCount; i++) {
-            // Image view create info.
-            VkImageViewCreateInfo createInfo{};
-            createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-            createInfo.image = vkSwapChainImages[i];
-            createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-            createInfo.format = vkSelectedFormat.format;
-            createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
-            createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
-            createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
-            createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
-            createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-            createInfo.subresourceRange.baseMipLevel = 0;
-            createInfo.subresourceRange.levelCount = 1;
-            createInfo.subresourceRange.baseArrayLayer = 0;
-            createInfo.subresourceRange.layerCount = 1;
-            // Create an image view.
-            if (vkCreateImageView(vkDevice, &createInfo, nullptr, &vkSwapChainImageViews[i]) != VK_SUCCESS) {
-                std::cerr << "Failed to create an image view #" << i << "!" << std::endl;
-                abort();
-            }
-        }
 
 
 
@@ -2397,6 +2128,151 @@ int main()
 
         VkImageSubresourceRange subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
 
+
+
+
+
+
+
+        auto setImageLayout = [=](
+                    VkCommandBuffer cmdbuffer,
+                    VkImage image,
+                    VkImageLayout oldImageLayout,
+                    VkImageLayout newImageLayout,
+                    VkImageSubresourceRange subresourceRange,
+                    VkPipelineStageFlags srcStageMask = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                    VkPipelineStageFlags dstStageMask = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT)
+                {
+                    // Create an image barrier object
+                    VkImageMemoryBarrier imageMemoryBarrier {};
+                    imageMemoryBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+                    imageMemoryBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                    imageMemoryBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                    imageMemoryBarrier.oldLayout = oldImageLayout;
+                    imageMemoryBarrier.newLayout = newImageLayout;
+                    imageMemoryBarrier.image = image;
+                    imageMemoryBarrier.subresourceRange = subresourceRange;
+
+                    // Source layouts (old)
+                    // Source access mask controls actions that have to be finished on the old layout
+                    // before it will be transitioned to the new layout
+                    switch (oldImageLayout)
+                    {
+                    case VK_IMAGE_LAYOUT_UNDEFINED:
+                        // Image layout is undefined (or does not matter)
+                        // Only valid as initial layout
+                        // No flags required, listed only for completeness
+                        imageMemoryBarrier.srcAccessMask = 0;
+                        break;
+
+                    case VK_IMAGE_LAYOUT_PREINITIALIZED:
+                        // Image is preinitialized
+                        // Only valid as initial layout for linear images, preserves memory contents
+                        // Make sure host writes have been finished
+                        imageMemoryBarrier.srcAccessMask = VK_ACCESS_HOST_WRITE_BIT;
+                        break;
+
+                    case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:
+                        // Image is a color attachment
+                        // Make sure any writes to the color buffer have been finished
+                        imageMemoryBarrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+                        break;
+
+                    case VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL:
+                        // Image is a depth/stencil attachment
+                        // Make sure any writes to the depth/stencil buffer have been finished
+                        imageMemoryBarrier.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+                        break;
+
+                    case VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:
+                        // Image is a transfer source
+                        // Make sure any reads from the image have been finished
+                        imageMemoryBarrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+                        break;
+
+                    case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL:
+                        // Image is a transfer destination
+                        // Make sure any writes to the image have been finished
+                        imageMemoryBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+                        break;
+
+                    case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL:
+                        // Image is read by a shader
+                        // Make sure any shader reads from the image have been finished
+                        imageMemoryBarrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+                        break;
+                    default:
+                        // Other source layouts aren't handled (yet)
+                        break;
+                    }
+
+                    // Target layouts (new)
+                    // Destination access mask controls the dependency for the new image layout
+                    switch (newImageLayout)
+                    {
+                    case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL:
+                        // Image will be used as a transfer destination
+                        // Make sure any writes to the image have been finished
+                        imageMemoryBarrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+                        break;
+
+                    case VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:
+                        // Image will be used as a transfer source
+                        // Make sure any reads from the image have been finished
+                        imageMemoryBarrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+                        break;
+
+                    case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:
+                        // Image will be used as a color attachment
+                        // Make sure any writes to the color buffer have been finished
+                        imageMemoryBarrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+                        break;
+
+                    case VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL:
+                        // Image layout will be used as a depth/stencil attachment
+                        // Make sure any writes to depth/stencil buffer have been finished
+                        imageMemoryBarrier.dstAccessMask = imageMemoryBarrier.dstAccessMask | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+                        break;
+
+                    case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL:
+                        // Image will be read in a shader (sampler, input attachment)
+                        // Make sure any writes to the image have been finished
+                        if (imageMemoryBarrier.srcAccessMask == 0)
+                        {
+                            imageMemoryBarrier.srcAccessMask = VK_ACCESS_HOST_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
+                        }
+                        imageMemoryBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+                        break;
+                    default:
+                        // Other source layouts aren't handled (yet)
+                        break;
+                    }
+
+                    // Put barrier inside setup command buffer
+                    vkCmdPipelineBarrier(
+                        cmdbuffer,
+                        srcStageMask,
+                        dstStageMask,
+                        0,
+                        0, nullptr,
+                        0, nullptr,
+                        1, &imageMemoryBarrier);
+                };
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
         // Describe a rendering sequence for each command buffer.
             for (size_t i = 0; i < vkCommandBuffers.size(); i++) {
                 // Start adding commands into the buffer.
@@ -2444,7 +2320,7 @@ int main()
                 // Prepare ray tracing output image as transfer source
                 setImageLayout(
                     vkCommandBuffers[i],
-                    m_storage_image,
+                    vkStorageImage,
                     VK_IMAGE_LAYOUT_GENERAL,
                     VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                     subresourceRange);
@@ -2455,7 +2331,7 @@ int main()
                 copyRegion.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
                 copyRegion.dstOffset = { 0, 0, 0 };
                 copyRegion.extent = { vkSelectedExtent.width, vkSelectedExtent.height, 1 };
-                vkCmdCopyImage(vkCommandBuffers[i], m_storage_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, vkSwapChainImages[i], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
+                vkCmdCopyImage(vkCommandBuffers[i], vkStorageImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, vkSwapChainImages[i], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
 
                 // Transition swap chain image back for presentation
                 setImageLayout(
@@ -2468,7 +2344,7 @@ int main()
                 // Transition ray tracing output image back to general layout
                 setImageLayout(
                     vkCommandBuffers[i],
-                    m_storage_image,
+                    vkStorageImage,
                     VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                     VK_IMAGE_LAYOUT_GENERAL,
                     subresourceRange);
@@ -2679,11 +2555,6 @@ int main()
     // Destory command pool
     vkDestroyCommandPool(vkDevice, vkCommandPool, nullptr);
 
-
-    // Destroy shader modules.
-    vkDestroyShaderModule(vkDevice, vkFragmentShaderModule, nullptr);
-    vkDestroyShaderModule(vkDevice, vkVertexShaderModule, nullptr);
-
     // Destory swap chain image views.
     for (auto imageView : vkSwapChainImageViews) {
         vkDestroyImageView(vkDevice, imageView, nullptr);
@@ -2691,9 +2562,6 @@ int main()
 
     // Destroy swap chain.
     vkDestroySwapchainKHR(vkDevice, vkSwapChain, nullptr);
-
-    // Destory descriptor set layout for uniforms.
-    vkDestroyDescriptorSetLayout(vkDevice, vkDescriptorSetLayout, nullptr);
 
     // Destory logical device.
     vkDestroyDevice(vkDevice, nullptr);
