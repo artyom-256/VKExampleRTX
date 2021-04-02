@@ -1501,7 +1501,7 @@ int main()
     // ---------
 
     // Open file.
-    std::ifstream raygenShaderFile("main2.rgen.spv", std::ios::ate | std::ios::binary);
+    std::ifstream raygenShaderFile("main.rgen.spv", std::ios::ate | std::ios::binary);
     if (!raygenShaderFile.is_open()) {
         std::cerr << "Raygen shader file not found!" << std::endl;
         abort();
@@ -1545,7 +1545,7 @@ int main()
     // ----------
 
     // Open file.
-    std::ifstream raymissShaderFile("main2.rmiss.spv", std::ios::ate | std::ios::binary);
+    std::ifstream raymissShaderFile("main.rmiss.spv", std::ios::ate | std::ios::binary);
     if (!raymissShaderFile.is_open()) {
         std::cerr << "Raymiss shader file not found!" << std::endl;
         abort();
@@ -1589,7 +1589,7 @@ int main()
     // ---------
 
     // Open file.
-    std::ifstream rayhitShaderFile("main2.rchit.spv", std::ios::ate | std::ios::binary);
+    std::ifstream rayhitShaderFile("main.rchit.spv", std::ios::ate | std::ios::binary);
     if (!rayhitShaderFile.is_open()) {
         std::cerr << "Rayhit shader file not found!" << std::endl;
         abort();
