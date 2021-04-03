@@ -1,6 +1,6 @@
 /****************************************************************************
  *                                                                          *
- *  Example of a simple 3D application using Vulkan API                     *
+ *  Example of a simple ray tracing application using Vulkan API            *
  *  Copyright (C) 2020 Artem Hlumov <artyom.altair@gmail.com>               *
  *                                                                          *
  *  This program is free software: you can redistribute it and/or modify    *
@@ -18,8 +18,7 @@
  *                                                                          *
  ****************************************************************************
  *                                                                          *
- *       The application shows a simple example of the ray tracing          *
- *                    pipeline drawing a solid cube.                        *
+ *    The application draws a cube using Nvidia Ray Tracing extension.      *
  *                                                                          *
  *    The example is designed to demonstrate pure sequence of actions       *
  *    required to create a ray tracing  application, so all code is done    *
@@ -28,7 +27,7 @@
  *   You may thing about how to split this into modules in order to make    *
  *                    an engine for your application.                       *
  *                                                                          *
- *           The code is inspirited of the original tutorial:               *
+ *           The code is inspirited by the original tutorial:               *
  *                     https://vulkan-tutorial.com                          *
  *                                                                          *
  ****************************************************************************/
@@ -108,8 +107,8 @@ int main()
     // ==========================================================================
     //                 STEP 1: Create a Window using GLFW
     // ==========================================================================
-    // GLFW abstracts native calls to create the window and allows us to write
-    // a cross-platform application.
+    // GLFW abstracts native calls to create a window and allows us to write
+    // cross-platform applications.
     // ==========================================================================
 
     // Initialize GLFW context.
@@ -317,7 +316,7 @@ int main()
     // in the system - select one of them.
     // We are going to perform some tests and fetch device information that
     // we will need after. So, to not request this information twice,
-    // we will fill some structures declared below for the selected
+    // we fill some structures declared below for the selected
     // physical device and use them in the rest of code.
     // ==========================================================================
 
@@ -343,8 +342,6 @@ int main()
         std::vector< VkPresentModeKHR > presentModes;
     };
     SwapChainSupportDetails swapChainSupportDetails;
-    // Here we keep a selected format for z-buffer.
-    VkFormat vkDepthFormat = VK_FORMAT_UNDEFINED;
     // --------------------------------------------------------------------------
 
     // Desired extensions that should be supported by the graphical card.
@@ -460,34 +457,13 @@ int main()
         bool swapChainOk = !currenDeviceSwapChainDetails.formats.empty() &&
                            !currenDeviceSwapChainDetails.presentModes.empty();
 
-        // ----------------------------------------------
-        // TEST 4: Check if the depth buffer is avaialble
-        // ----------------------------------------------
-
-        // Select a format of depth buffer.
-        // We have a list of formats we need to test and pick one.
-        std::vector< VkFormat > depthFormatCandidates = {
-            VK_FORMAT_D32_SFLOAT,
-            VK_FORMAT_D32_SFLOAT_S8_UINT,
-            VK_FORMAT_D24_UNORM_S8_UINT
-        };
-        VkFormat currentDepthFormat = VK_FORMAT_UNDEFINED;
-        for (VkFormat format : depthFormatCandidates) {
-            VkFormatProperties vkProps;
-            vkGetPhysicalDeviceFormatProperties(device, format, &vkProps);
-            if (vkProps.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) {
-                currentDepthFormat = format;
-                break;
-            }
-        }
-        bool depthFormatOk = (currentDepthFormat != VK_FORMAT_UNDEFINED);
+        // ------------------------------------------------------------------------------------
 
         // Select the first suitable device.
-        if (allExtensionsAvailable && queuesOk && swapChainOk && depthFormatOk) {
+        if (allExtensionsAvailable && queuesOk && swapChainOk) {
             vkPhysicalDevice = device;
             queueFamilyIndices = currentDeviceQueueFamilyIndices;
             swapChainSupportDetails = currenDeviceSwapChainDetails;
-            vkDepthFormat = currentDepthFormat;
             break;
         }
     }
@@ -640,7 +616,7 @@ int main()
     // ==========================================================================
     //                     STEP 11: Create a swap chain
     // ==========================================================================
-    // Swap chain is a chain of rendered images that are going to be displayed
+    // Swap chain is a chain of rendered images that are to be displayed
     // on the screen. It is used to synchronize image rendering with refresh
     // rate of the screen (VSync). If the application generates frames faster
     // than they are displayed, it should wait.
@@ -967,11 +943,11 @@ int main()
     //                    STEP 16: Create a TLAS
     // ==========================================================================
     // Top level acceleration structure refers to a blas and create a couple of
-    // instances of the same geometry having its own transformation.
+    // instances of the same geometry having their own transformations.
     // So BLAS defines pure geometry and TLAS applies transformation on top.
     // Therefore one geometry may be reused several times in different positions.
     // The geometry instance should be placed into an "instance buffer", so
-    // it is accessible by the graphic card in the build stage.
+    // it is accessible by the GPU in the build stage.
     // ==========================================================================
 
     // -----------------------------
@@ -1122,7 +1098,7 @@ int main()
     // ==========================================================================
     //                    STEP 17: Create a scratch buffer
     // ==========================================================================
-    // Acceleration structures should be build on the graphical card before they
+    // Acceleration structures should be built on the GPU before they
     // are used for ray tracing. The build process requires some additional
     // memory we have to allocate. This memory is called a scratch buffer.
     // ==========================================================================
@@ -1189,7 +1165,7 @@ int main()
     // ==========================================================================
     //                    STEP 18: Build acceleration structures
     // ==========================================================================
-    // Acceleration structures should be built on the graphical card before
+    // Acceleration structures should be built on the GPU before
     // they are used first time. To do this we need to create a temporary
     // command pool and execute build commands.
     // ==========================================================================
@@ -2195,7 +2171,7 @@ int main()
     // ==========================================================================
     //                         STEP 29: Main loop
     // ==========================================================================
-    // Main loop performs event hanlding and executes rendering.
+    // Main loop executes rendering and put the image into the presentation queue.
     // ==========================================================================
 
     // Pick a present queue.
