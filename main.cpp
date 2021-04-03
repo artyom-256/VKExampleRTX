@@ -719,7 +719,7 @@ int main()
     }
 
     // ==========================================================================
-    //                    STEP 14: Create a vertex buffer
+    //                    STEP 13: Create a vertex buffer
     // ==========================================================================
     // Vertex buffer contains vertices of our model and will be used to construct
     // acceleration structures for ray tracing.
@@ -828,7 +828,7 @@ int main()
     vkUnmapMemory(vkDevice, vkVertexBufferMemory);
 
     // ==========================================================================
-    //                    STEP 15: Import extension function
+    //                    STEP 14: Import extension function
     // ==========================================================================
     // Function that belong to extensions are not available in the vulkan header
     // because the corresponding extension might be not enabled or not available
@@ -848,7 +848,7 @@ int main()
     PFN_vkCmdTraceRaysNV vkCmdTraceRaysNV = reinterpret_cast<PFN_vkCmdTraceRaysNV>(vkGetDeviceProcAddr(vkDevice, "vkCmdTraceRaysNV"));
 
     // ==========================================================================
-    //                    STEP 16: Create a BLAS
+    //                    STEP 15: Create a BLAS
     // ==========================================================================
     // Bottom level acceleration structure describes geometry of an object
     // regardles to its position in the world space.
@@ -1361,7 +1361,7 @@ int main()
     }
 
     // ==========================================================================
-    //                    STEP 19: Change image layout
+    //                    STEP 20: Change image layout
     // ==========================================================================
     // We have to change the storage image layout in order to proceed.
     // Vulkan allows to do this via image memory barrier, so we have to create
@@ -1455,7 +1455,7 @@ int main()
     vkDestroyCommandPool(vkDevice, vkSetImageLayoutCommandPool, nullptr);
 
     // ==========================================================================
-    //                    STEP 20: Load shaders
+    //                    STEP 21: Load shaders
     // ==========================================================================
     // The minimal example of the ray tracing requires three shaders:
     // - raygen, to generate a ray, trace it and write color output
@@ -1602,7 +1602,7 @@ int main()
     };
 
     // ==========================================================================
-    //                    STEP 21: Set up shader groups
+    //                    STEP 22: Set up shader groups
     // ==========================================================================
     // Unlike other types of shaders, ray tracing ones do no have a strict order.
     // So we have to describe it creating shader groups.
@@ -1637,7 +1637,7 @@ int main()
     groups[INDEX_CLOSEST_HIT].closestHitShader = INDEX_CLOSEST_HIT;
 
     // ==========================================================================
-    //                    STEP 22: Create pipeline layout
+    //                    STEP 23: Create pipeline layout
     // ==========================================================================
     // Pipeline layout defines uniforms available in shaders while rendering.
     // The layout is required to create a pipeline but it contains no data.
@@ -1693,7 +1693,7 @@ int main()
     }
 
     // ==========================================================================
-    //                    STEP 23: Create a pipeline
+    //                    STEP 24: Create a pipeline
     // ==========================================================================
     // Ray tracing pipeline binds together shaders, shader groups and uniforms.
     // ==========================================================================
@@ -1713,7 +1713,7 @@ int main()
     }
 
     // ==========================================================================
-    //                STEP 24: Create a shader binding table
+    //                STEP 25: Create a shader binding table
     // ==========================================================================
     // The Shader Binding Table consists of a set of shader function handles and
     // embedded parameters for these functions. The shaders in the table
@@ -1785,7 +1785,7 @@ int main()
     vkUnmapMemory(vkDevice, vkShaderBindingTableMemory);
 
     // ==========================================================================
-    //                      STEP 25: Create uniform buffers
+    //                      STEP 26: Create uniform buffers
     // ==========================================================================
     // Uniform buffer contains structures that are provided to shaders
     // as uniform variables. In our case we should provide a view and a projection
@@ -1859,7 +1859,7 @@ int main()
     vkUnmapMemory(vkDevice, vkUniformBufferMemory);
 
     // ==========================================================================
-    //                      STEP 26: Write descriptor sets
+    //                      STEP 27: Write descriptor sets
     // ==========================================================================
     // In order to provide particular values of uniforms to shaders we should
     // write descriptor sets.
@@ -1941,7 +1941,7 @@ int main()
     vkUpdateDescriptorSets(vkDevice, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, VK_NULL_HANDLE);
 
     // ==========================================================================
-    //                    STEP 27: Create command buffers
+    //                    STEP 28: Create command buffers
     // ==========================================================================
     // Command buffers describe a set of rendering commands submitted to Vulkan.
     // We need to have one buffer per each image in the swap chain.
@@ -2107,7 +2107,7 @@ int main()
     }
 
     // ==========================================================================
-    //                   STEP 28: Synchronization primitives
+    //                   STEP 29: Synchronization primitives
     // ==========================================================================
     // Rendering and presentation are not synchronized. It means that if the
     // application renders frames faster then they are displayed, it will lead
@@ -2169,7 +2169,7 @@ int main()
     }
 
     // ==========================================================================
-    //                         STEP 29: Main loop
+    //                         STEP 30: Main loop
     // ==========================================================================
     // Main loop executes rendering and put the image into the presentation queue.
     // ==========================================================================
@@ -2248,7 +2248,7 @@ int main()
     }
 
     // ==========================================================================
-    //                     STEP 30: Deinitialization
+    //                     STEP 31: Deinitialization
     // ==========================================================================
     // Destroy all created Vukan structures in a reverse order.
     // ==========================================================================
