@@ -569,7 +569,7 @@ int main()
 
 #else
 
-    createInfo.enabledLayerCount = 0;
+    vkDeviceCreateInfo.enabledLayerCount = 0;
 
 #endif
 

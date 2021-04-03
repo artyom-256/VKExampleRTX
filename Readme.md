@@ -1,6 +1,6 @@
 ### Build tools
 * CMake version 3.17.1
-* MinGW version 7.3.0 (x64)
+* MinGW version 7.3.0 (x64 only!)
 
 ### Dependencies
 - GLFW v3.3.2 (https://www.glfw.org/)
@@ -14,8 +14,7 @@
   - **GLFW_INC** - path to GLFW include directory
   - **GLFW_LIB** - path to GLFW lib directory
   - **GLM_INC** - path to GLM include directory
-  - **VK_SDK_INC** - path to LunarG Vulkan SDK include directory
-  - **VK_SDK_LIB** - path to LunarG Vulkan SDK lib directory
+  - **VK_SDK** - path to LunarG Vulkan SDK directory
 - Clone repo and build it using cmake & make
   ```bash
   git clone https://github.com/artyom-256/VKExampleRTX.git
