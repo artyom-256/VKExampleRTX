@@ -1,6 +1,15 @@
+# VKExampleRTX
+
+The application demonstrates a simple example of a ray tracing. It does not calculate shadows or reflection, but rather contains a minimal example needed to run the ray tracing pipeline. The code is written to demonstrate an exact sequence of actions you have to perform in order to run a ray tracing application using Vulkan, so no homemade frameworks, just a single big main function. Some code duplication was intentionally left to make the sequence simple.
+
+![Screenshot image](example.jpg)
+
+### x64 only!
+Ray tracing extensions are not supported by x86 version of nvidia dlls, so you have to compile the example for x64.
+
 ### Build tools
 * CMake version 3.17.1
-* MinGW version 7.3.0 (x64 only!)
+* MinGW version 7.3.0
 
 ### Dependencies
 - GLFW v3.3.2 (https://www.glfw.org/)
