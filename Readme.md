@@ -25,12 +25,12 @@
   cmake .. -DGLFW_INC=C:/Lib/glfw-3.3.2/include \
            -DGLFW_LIB=C:/Lib/glfw-3.3.2/lib \
            -DGLM_INC=C:/Lib/glm-0.9.9.8/include \
-           -DVK_SDK_INC=C:/Lib/VulkanSDK_1.2.141.0/Include \
-           -DVK_SDK_LIB=C:/Lib/VulkanSDK_1.2.141.0/Lib
+           -DVK_SDK=C:/Lib/VulkanSDK_1.2.141.0
   make -j4
   ``` 
 
 ### Using validation layers
+If you want to enable debug messages, compile the project with -DDEBUG_MODE.
 In order to run the application you have to enable validation layers according to https://vulkan.lunarg.com/doc/view/1.1.121.1/linux/layer_configuration.html
 For example for Windows you should set the following environment variables:
   ```bash
