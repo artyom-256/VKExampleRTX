@@ -1,6 +1,6 @@
 # VKExampleRTX
 
-The application demonstrates a simple example of a ray tracing. It does not calculate shadows or reflection, but rather contains a minimal example needed to run the ray tracing pipeline. The code is written to demonstrate an exact sequence of actions you have to perform in order to run a ray tracing application using Vulkan, so no homemade frameworks, just a single big main function. Some code duplication was intentionally left to make the sequence simple.
+The application demonstrates a simple example of ray tracing. It does not calculate shadows or reflection, but rather contains a minimal example needed to run the ray tracing pipeline. The code is written to demonstrate an exact sequence of actions you have to perform in order to run a ray tracing application using Vulkan, so no homemade frameworks, just a single big main function. Some code duplication was intentionally left to make the sequence simple.
 
 ![Screenshot image](example.jpg)
 
